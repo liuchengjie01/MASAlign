@@ -7,8 +7,11 @@ __pycache__/
 *.so
 
 .vscode/
-.mmd
+*.mmd
 critical_steps.json
+
+.venv/
+*.pyc
 
 # Distribution / packaging
 .Python

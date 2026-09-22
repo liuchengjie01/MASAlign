@@ -4,8 +4,8 @@ import glob
 import json
 import os
 
-from utils.prs_graph import MDPGraph
-from utils.tool import print_graph, save_mermaid, get_canonical_node_id
+from critical_extractor.utils.prs_graph import MDPGraph
+from critical_extractor.utils.tool import print_graph, save_mermaid, get_canonical_node_id
 
 
           
