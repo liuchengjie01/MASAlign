@@ -6,6 +6,10 @@ __pycache__/
 # C extensions
 *.so
 
+.vscode/
+.mmd
+critical_steps.json
+
 # Distribution / packaging
 .Python
 build/

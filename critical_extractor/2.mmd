@@ -1,0 +1,30 @@
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'fontFamily': 'Times New Roman, serif',
+    'fontSize': '16px'
+  }
+}}%%
+graph TD
+    com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity{{"com.android.chrome/org.chromium.chrome.browser.ChromeTabbedActivity<br/><b>LRS: 0.00</b>"}}
+    com_booking_com_booking_appindex_presentation_activity_SearchActivity{{"com.booking/com.booking.appindex.presentation.activity.SearchActivity<br/><b>LRS: 0.00</b>"}}
+    Sys2038_com_example_myapplication_com_example_myapplication_PopupActivity["Sys2038:com.example.myapplication/com.example.myapplication.PopupActivity<br/><b>LRS: 0.00</b>"]
+    com_booking_com_booking_identity_auth_app_AuthComposeActivity("com.booking/com.booking.identity.auth.app.AuthComposeActivity<br/><b>LRS: -20.72</b>")
+    _("/<br/><b>LRS: -20.72</b>")
+    com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity("com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity<br/><b>LRS: -20.72</b>")
+    com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity -->|"P=0.97 (N=78)"| com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity
+    com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity -->|"P=0.03 (N=2)"| com_booking_com_booking_appindex_presentation_activity_SearchActivity
+    com_booking_com_booking_appindex_presentation_activity_SearchActivity -->|"P=1.00 (N=1)"| Sys2038_com_example_myapplication_com_example_myapplication_PopupActivity
+    Sys2038_com_example_myapplication_com_example_myapplication_PopupActivity -->|"P=1.00 (N=1)"| com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity
+    com_booking_com_booking_identity_auth_app_AuthComposeActivity -->|"P=0.96 (N=27)"| com_booking_com_booking_identity_auth_app_AuthComposeActivity
+    _ -->|"P=1.00 (N=7)"| _
+    com_booking_com_booking_identity_auth_app_AuthComposeActivity -->|"P=0.04 (N=1)"| com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity
+    com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity -->|"P=1.00 (N=10)"| com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity
+
+    %% 节点着色与样式定义
+    classDef attackedNode fill:#ffcccc,stroke:#ff0000,stroke-width:2px,color:#990000;
+    classDef safeSink fill:#ccffcc,stroke:#009900,stroke-width:2px,color:#006600;
+    classDef normalNode fill:#f4f4f4,stroke:#333333,stroke-width:1.5px,color:#111111;
+    class com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity,com_booking_com_booking_appindex_presentation_activity_SearchActivity attackedNode;
+    class com_booking_com_booking_identity_auth_app_AuthComposeActivity,_,com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity safeSink;
+    class Sys2038_com_example_myapplication_com_example_myapplication_PopupActivity normalNode;

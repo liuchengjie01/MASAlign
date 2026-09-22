@@ -1,0 +1,77 @@
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'fontFamily': 'Times New Roman, serif',
+    'fontSize': '16px'
+  }
+}}%%
+graph TD
+    com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity{{"com.android.chrome/org.chromium.chrome.browser.ChromeTabbedActivity<br/><b>LRS: 0.00</b>"}}
+    com_booking_com_booking_appindex_presentation_activity_SearchActivity("com.booking/com.booking.appindex.presentation.activity.SearchActivity<br/><b>LRS: -2.44</b>")
+    Sys2038_com_example_myapplication_com_example_myapplication_PopupActivity["Sys2038:com.example.myapplication/com.example.myapplication.PopupActivity<br/><b>LRS: -0.34</b>"]
+    com_booking_com_booking_wishlist_ui_activity_WishlistDetailsActivity("com.booking/com.booking.wishlist.ui.activity.WishlistDetailsActivity<br/><b>LRS: -4.31</b>")
+    com_booking_com_booking_property_detail_PropertyPageActivity["com.booking/com.booking.property.detail.PropertyPageActivity<br/><b>LRS: -4.60</b>"]
+    com_booking_com_booking_identity_profile_presentation_ProfileActivity{{"com.booking/com.booking.identity.profile.presentation.ProfileActivity<br/><b>LRS: 0.00</b>"}}
+    _{{"/<br/><b>LRS: 0.00</b>"}}
+    com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity["com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity<br/><b>LRS: -3.17</b>"]
+    com_booking_com_booking_startup_HomeActivity["com.booking/com.booking.startup.HomeActivity<br/><b>LRS: -2.44</b>"]
+    com_booking_com_booking_room_list_RoomListJPCActivity["com.booking/com.booking.room.list.RoomListJPCActivity<br/><b>LRS: -10.82</b>"]
+    com_booking_com_booking_bookingprocess_activity_BookingStageActivity("com.booking/com.booking.bookingprocess.activity.BookingStageActivity<br/><b>LRS: -10.82</b>")
+    com_booking_com_booking_searchbox_activity_DisambiguationActivity("com.booking/com.booking.searchbox.activity.DisambiguationActivity<br/><b>LRS: -4.05</b>")
+    com_android_settings_com_android_settings_Settings["com.android.settings/com.android.settings.Settings<br/><b>LRS: -4.74</b>"]
+    com_google_android_settings_intelligence_com_google_android_settings_intelligence_modules_search_SearchActivity["com.google.android.settings.intelligence/com.google.android.settings.intelligence.modules.search.SearchActivity<br/><b>LRS: -4.74</b>"]
+    com_booking_com_booking_wishlist_ui_activity_WishlistMapActivity["com.booking/com.booking.wishlist.ui.activity.WishlistMapActivity<br/><b>LRS: -4.31</b>"]
+    com_booking_com_booking_assistant_GuestMessagingActivity["com.booking/com.booking.assistant.GuestMessagingActivity<br/><b>LRS: -2.44</b>"]
+    com_booking_com_booking_rewardsandwalletpresentation_RewardsAndWalletActivity["com.booking/com.booking.rewardsandwalletpresentation.RewardsAndWalletActivity<br/><b>LRS: -3.13</b>"]
+    com_booking_com_booking_genius_presentation_shared_GeniusLandingActivity("com.booking/com.booking.genius.presentation.shared.GeniusLandingActivity<br/><b>LRS: -2.44</b>")
+    com_android_chrome_com_google_android_apps_chrome_Main("com.android.chrome/com.google.android.apps.chrome.Main<br/><b>LRS: -11.51</b>")
+    com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity -->|"P=0.08 (N=5)"| com_booking_com_booking_appindex_presentation_activity_SearchActivity
+    com_booking_com_booking_appindex_presentation_activity_SearchActivity -->|"P=0.12 (N=6)"| Sys2038_com_example_myapplication_com_example_myapplication_PopupActivity
+    Sys2038_com_example_myapplication_com_example_myapplication_PopupActivity -->|"P=0.71 (N=5)"| com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity
+    com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity -->|"P=0.89 (N=56)"| com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity
+    Sys2038_com_example_myapplication_com_example_myapplication_PopupActivity -->|"P=0.14 (N=1)"| com_booking_com_booking_appindex_presentation_activity_SearchActivity
+    com_booking_com_booking_appindex_presentation_activity_SearchActivity -->|"P=0.55 (N=27)"| com_booking_com_booking_appindex_presentation_activity_SearchActivity
+    com_booking_com_booking_appindex_presentation_activity_SearchActivity -->|"P=0.08 (N=4)"| com_booking_com_booking_wishlist_ui_activity_WishlistDetailsActivity
+    com_booking_com_booking_wishlist_ui_activity_WishlistDetailsActivity -->|"P=0.46 (N=6)"| com_booking_com_booking_wishlist_ui_activity_WishlistDetailsActivity
+    com_booking_com_booking_wishlist_ui_activity_WishlistDetailsActivity -->|"P=0.31 (N=4)"| com_booking_com_booking_property_detail_PropertyPageActivity
+    com_booking_com_booking_property_detail_PropertyPageActivity -->|"P=0.75 (N=3)"| com_booking_com_booking_wishlist_ui_activity_WishlistDetailsActivity
+    com_booking_com_booking_wishlist_ui_activity_WishlistDetailsActivity -->|"P=0.15 (N=2)"| com_booking_com_booking_appindex_presentation_activity_SearchActivity
+    com_booking_com_booking_appindex_presentation_activity_SearchActivity -->|"P=0.06 (N=3)"| com_booking_com_booking_identity_profile_presentation_ProfileActivity
+    com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity -->|"P=0.03 (N=2)"| _
+    _ -->|"P=0.50 (N=1)"| com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity
+    com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity -->|"P=0.47 (N=8)"| com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity
+    com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity -->|"P=0.06 (N=1)"| com_booking_com_booking_startup_HomeActivity
+    com_booking_com_booking_startup_HomeActivity -->|"P=1.00 (N=1)"| com_booking_com_booking_appindex_presentation_activity_SearchActivity
+    _ -->|"P=0.50 (N=1)"| _
+    com_booking_com_booking_property_detail_PropertyPageActivity -->|"P=0.25 (N=1)"| com_booking_com_booking_room_list_RoomListJPCActivity
+    com_booking_com_booking_room_list_RoomListJPCActivity -->|"P=1.00 (N=3)"| com_booking_com_booking_bookingprocess_activity_BookingStageActivity
+    com_booking_com_booking_bookingprocess_activity_BookingStageActivity -->|"P=1.00 (N=2)"| com_booking_com_booking_room_list_RoomListJPCActivity
+    com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity -->|"P=0.41 (N=7)"| com_booking_com_booking_appindex_presentation_activity_SearchActivity
+    com_booking_com_booking_appindex_presentation_activity_SearchActivity -->|"P=0.08 (N=4)"| com_booking_com_booking_searchbox_activity_DisambiguationActivity
+    com_booking_com_booking_searchbox_activity_DisambiguationActivity -->|"P=0.73 (N=11)"| com_booking_com_booking_searchbox_activity_DisambiguationActivity
+    com_booking_com_booking_searchbox_activity_DisambiguationActivity -->|"P=0.07 (N=1)"| com_android_settings_com_android_settings_Settings
+    com_android_settings_com_android_settings_Settings -->|"P=0.50 (N=1)"| com_google_android_settings_intelligence_com_google_android_settings_intelligence_modules_search_SearchActivity
+    com_google_android_settings_intelligence_com_google_android_settings_intelligence_modules_search_SearchActivity -->|"P=1.00 (N=1)"| com_android_settings_com_android_settings_Settings
+    com_android_settings_com_android_settings_Settings -->|"P=0.50 (N=1)"| com_booking_com_booking_searchbox_activity_DisambiguationActivity
+    com_booking_com_booking_searchbox_activity_DisambiguationActivity -->|"P=0.20 (N=3)"| com_booking_com_booking_appindex_presentation_activity_SearchActivity
+    com_booking_com_booking_identity_profile_presentation_ProfileActivity -->|"P=1.00 (N=2)"| com_booking_com_booking_appindex_presentation_activity_SearchActivity
+    com_booking_com_booking_wishlist_ui_activity_WishlistDetailsActivity -->|"P=0.08 (N=1)"| com_booking_com_booking_wishlist_ui_activity_WishlistMapActivity
+    com_booking_com_booking_wishlist_ui_activity_WishlistMapActivity -->|"P=1.00 (N=1)"| com_booking_com_booking_wishlist_ui_activity_WishlistDetailsActivity
+    com_booking_com_booking_appindex_presentation_activity_SearchActivity -->|"P=0.02 (N=1)"| com_booking_com_booking_assistant_GuestMessagingActivity
+    com_booking_com_booking_assistant_GuestMessagingActivity -->|"P=1.00 (N=1)"| com_booking_com_booking_appindex_presentation_activity_SearchActivity
+    com_booking_com_booking_appindex_presentation_activity_SearchActivity -->|"P=0.02 (N=1)"| com_booking_com_booking_rewardsandwalletpresentation_RewardsAndWalletActivity
+    com_booking_com_booking_rewardsandwalletpresentation_RewardsAndWalletActivity -->|"P=0.50 (N=1)"| com_booking_com_booking_rewardsandwalletpresentation_RewardsAndWalletActivity
+    com_booking_com_booking_rewardsandwalletpresentation_RewardsAndWalletActivity -->|"P=0.50 (N=1)"| com_booking_com_booking_appindex_presentation_activity_SearchActivity
+    com_booking_com_booking_appindex_presentation_activity_SearchActivity -->|"P=0.06 (N=3)"| com_booking_com_booking_genius_presentation_shared_GeniusLandingActivity
+    com_booking_com_booking_genius_presentation_shared_GeniusLandingActivity -->|"P=1.00 (N=2)"| com_booking_com_booking_appindex_presentation_activity_SearchActivity
+    com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity -->|"P=0.06 (N=1)"| Sys2038_com_example_myapplication_com_example_myapplication_PopupActivity
+    Sys2038_com_example_myapplication_com_example_myapplication_PopupActivity -->|"P=0.14 (N=1)"| com_android_chrome_com_google_android_apps_chrome_Main
+    com_android_chrome_com_google_android_apps_chrome_Main -->|"P=1.00 (N=12)"| com_android_chrome_com_google_android_apps_chrome_Main
+
+    %% 节点着色与样式定义
+    classDef attackedNode fill:#ffcccc,stroke:#ff0000,stroke-width:2px,color:#990000;
+    classDef safeSink fill:#ccffcc,stroke:#009900,stroke-width:2px,color:#006600;
+    classDef normalNode fill:#f4f4f4,stroke:#333333,stroke-width:1.5px,color:#111111;
+    class com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity,com_booking_com_booking_identity_profile_presentation_ProfileActivity,_ attackedNode;
+    class com_booking_com_booking_appindex_presentation_activity_SearchActivity,com_booking_com_booking_wishlist_ui_activity_WishlistDetailsActivity,com_booking_com_booking_bookingprocess_activity_BookingStageActivity,com_booking_com_booking_searchbox_activity_DisambiguationActivity,com_booking_com_booking_genius_presentation_shared_GeniusLandingActivity,com_android_chrome_com_google_android_apps_chrome_Main safeSink;
+    class Sys2038_com_example_myapplication_com_example_myapplication_PopupActivity,com_booking_com_booking_property_detail_PropertyPageActivity,com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity,com_booking_com_booking_startup_HomeActivity,com_booking_com_booking_room_list_RoomListJPCActivity,com_android_settings_com_android_settings_Settings,com_google_android_settings_intelligence_com_google_android_settings_intelligence_modules_search_SearchActivity,com_booking_com_booking_wishlist_ui_activity_WishlistMapActivity,com_booking_com_booking_assistant_GuestMessagingActivity,com_booking_com_booking_rewardsandwalletpresentation_RewardsAndWalletActivity normalNode;

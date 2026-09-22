@@ -1,0 +1,34 @@
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'fontFamily': 'Times New Roman, serif',
+    'fontSize': '16px'
+  }
+}}%%
+graph TD
+    com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity["com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity<br/><b>LRS: -2.28</b>"]
+    com_example_myapplication_com_example_myapplication_PopupActivity("com.example.myapplication/com.example.myapplication.PopupActivity<br/><b>LRS: -2.13</b>")
+    com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity{{"com.android.chrome/org.chromium.chrome.browser.ChromeTabbedActivity<br/><b>LRS: 0.00</b>"}}
+    com_google_android_gm_com_google_android_gm_ConversationListActivityGmail("com.google.android.gm/com.google.android.gm.ConversationListActivityGmail<br/><b>LRS: -5.53</b>")
+    UNKNOWN_NODE["UNKNOWN_NODE<br/><b>LRS: -4.14</b>"]
+    com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity -->|"P=0.86 (N=12)"| com_example_myapplication_com_example_myapplication_PopupActivity
+    com_example_myapplication_com_example_myapplication_PopupActivity -->|"P=0.12 (N=8)"| com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity
+    com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity -->|"P=0.98 (N=85)"| com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity
+    com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity -->|"P=0.02 (N=2)"| com_google_android_gm_com_google_android_gm_ConversationListActivityGmail
+    com_google_android_gm_com_google_android_gm_ConversationListActivityGmail -->|"P=0.75 (N=9)"| com_google_android_gm_com_google_android_gm_ConversationListActivityGmail
+    com_example_myapplication_com_example_myapplication_PopupActivity -->|"P=0.85 (N=57)"| com_example_myapplication_com_example_myapplication_PopupActivity
+    com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity -->|"P=0.14 (N=2)"| UNKNOWN_NODE
+    UNKNOWN_NODE -->|"P=0.13 (N=2)"| com_example_myapplication_com_example_myapplication_PopupActivity
+    UNKNOWN_NODE -->|"P=0.60 (N=9)"| UNKNOWN_NODE
+    UNKNOWN_NODE -->|"P=0.07 (N=1)"| com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity
+    com_example_myapplication_com_example_myapplication_PopupActivity -->|"P=0.03 (N=2)"| com_google_android_gm_com_google_android_gm_ConversationListActivityGmail
+    com_google_android_gm_com_google_android_gm_ConversationListActivityGmail -->|"P=0.25 (N=3)"| UNKNOWN_NODE
+    UNKNOWN_NODE -->|"P=0.20 (N=3)"| com_google_android_gm_com_google_android_gm_ConversationListActivityGmail
+
+    %% 节点着色与样式定义
+    classDef attackedNode fill:#ffcccc,stroke:#ff0000,stroke-width:2px,color:#990000;
+    classDef safeSink fill:#ccffcc,stroke:#009900,stroke-width:2px,color:#006600;
+    classDef normalNode fill:#f4f4f4,stroke:#333333,stroke-width:1.5px,color:#111111;
+    class com_android_chrome_org_chromium_chrome_browser_ChromeTabbedActivity attackedNode;
+    class com_example_myapplication_com_example_myapplication_PopupActivity,com_google_android_gm_com_google_android_gm_ConversationListActivityGmail safeSink;
+    class com_google_android_apps_nexuslauncher_com_google_android_apps_nexuslauncher_NexusLauncherActivity,UNKNOWN_NODE normalNode;
