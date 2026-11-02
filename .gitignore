@@ -9,6 +9,9 @@ __pycache__/
 .vscode/
 *.mmd
 critical_steps.json
+**/sft_trainer/data/
+**/opd_trainer/data/
+
 
 .venv/
 *.pyc

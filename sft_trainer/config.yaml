@@ -1,0 +1,46 @@
+# config.yaml
+model:
+  path: "E:/luis/GUI-Owl-7B"
+  trust_remote_code: true
+  torch_dtype: "bfloat16"       # bfloat16 / float16 / float32
+  gradient_checkpointing: true
+
+data:
+  train_jsonl: "data"
+  max_length: 8192               # Real reflection samples are about 7.3k tokens
+  max_images: 3                  # Keep only the newest screenshots in each sample
+  system_prompt: ""
+
+lora:
+  enable: false
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+  task_type: "CAUSAL_LM"
+
+training:
+  output_dir: "./sft_trainer/guiowl_ckpt"
+  num_train_epochs: 10
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 1.0e-5
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+  logging_steps: 10
+  save_strategy: "epoch"
+  save_total_limit: 2
+  bf16: true
+  fp16: false
+  gradient_checkpointing: true
+  report_to: "none"
+  remove_unused_columns: false
+  dataloader_pin_memory: false
+  seed: 42
+  resume_from_checkpoint: null   # 路径或 null
+
+runtime:
+  device: "cuda"                 # cuda / cpu
+  num_workers: 0
+  debug: true                   # true 时只取前 5 条样本

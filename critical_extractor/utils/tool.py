@@ -6,7 +6,7 @@ import re
 import numpy as np
 from PIL import Image
 
-from critical_extractor.utils.prs_graph import MDPGraph
+from utils.prs_graph import MDPGraph
 
 
 def save_mermaid(graph: MDPGraph, output_filepath: str = "mdp_graph.mmd"):

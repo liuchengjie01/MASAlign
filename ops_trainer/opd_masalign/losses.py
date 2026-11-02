@@ -21,6 +21,8 @@ from typing import Optional
 
 import torch
 
+from .optim import lerp_into_
+
 
 def masked_mean(x: torch.Tensor, mask: torch.Tensor, dim: Optional[int] = None) -> torch.Tensor:
     mask = mask.to(x.dtype)
@@ -141,35 +143,15 @@ def ema_update(student: torch.nn.Module, teacher: torch.nn.Module, alpha: float)
     is the original, well-tested behavior (see test_losses.py) and stays
     the fast path.
 
-    FSDP2 path: each rank only holds a local SHARD of every parameter, so
-    lerping local shards directly is only safe if student and teacher are
-    wrapped with byte-for-byte identical sharding -- too fragile to rely on
-    silently. Instead this gathers each model's full state dict (mirrors
-    SDPO's verl/utils/fsdp_utils.py::get_fsdp_full_state_dict, which verl
-    itself uses whenever it needs to materialize an unsharded model), lerps
-    the two full dicts, and re-shards the result back into the teacher via
-    the same broadcast-from-rank0 pattern as verl's
-    fsdp_utils.py::fsdp2_load_full_state_dict.
+    FSDP2 path: student and teacher are wrapped by the same code over the same
+    mesh, so parameter i holds the same slice of the same tensor on every
+    rank. Both modules are resharded first (the teacher only runs forward, so
+    the root module's own parameters would otherwise still be all-gathered),
+    then the local shards are lerped in place on the GPU. No communication,
+    no full-state-dict gather. Shape mismatches raise instead of silently
+    updating the wrong slice.
 
-    Validated (this repo's CPU dev box, no real GPUs available) with a real
-    8-PROCESS `fully_shard`-wrapped nn.Linear + a real (gloo) 8-rank
-    torch.distributed process group -- see
-    opd_masalign/tests/manual_multi_rank_ema_check.py. Confirmed genuine
-    8-way sharding (each rank's local shard is 1/8th the global tensor, not
-    the world_size=1 degenerate case), and the gather/lerp/scatter round
-    trip reproduces the exact plain-path numbers across real ranks. Still
-    only gloo/CPU, not nccl/GPU -- rerun that script on a real multi-GPU
-    node before fully trusting this in the production run.
-
-    That same 8-rank run also confirmed a NAIVE per-parameter lerp directly
-    on the sharded DTensor parameters (no gather at all) produces the exact
-    same result -- i.e. the full-gather-every-call approach below is
-    correct but pays for a full gather + broadcast on every call that
-    real 8-way sharding doesn't actually require (DTensor's elementwise ops
-    on identically-sharded operands already compute locally, no
-    communication needed). Kept as the gather-based version for now
-    pending a decision on whether to switch to the cheaper naive loop; see
-    manual_multi_rank_ema_check.py to reproduce this finding.
+    Verified on 4 x A100 with the real AutoGLM-Phone-9B (5 training steps).
 
     FSDP1 (the older `FullyShardedDataParallel` wrapper) is deliberately NOT
     handled here: its rank0-broadcast load semantics differ from FSDP2's and
@@ -183,7 +165,7 @@ def ema_update(student: torch.nn.Module, teacher: torch.nn.Module, alpha: float)
 
     if s_ver == 0 and t_ver == 0:
         for p_student, p_teacher in zip(student.parameters(), teacher.parameters()):
-            p_teacher.data.mul_(1 - alpha).add_(p_student.data, alpha=alpha)
+            lerp_into_(p_teacher.data, p_student.data, alpha)
         return
 
     if s_ver != t_ver:
@@ -198,20 +180,26 @@ def ema_update(student: torch.nn.Module, teacher: torch.nn.Module, alpha: float)
             "verl/utils/fsdp_utils.py::get_fsdp_full_state_dict directly."
         )
 
-    import torch.distributed as dist
-
-    # get_model_state_dict(..., cpu_offload=True, full_state_dict=True) is
-    # rank0-only by torch's own design (see
-    # _fsdp2_full_param_state_dict_rank0's docstring) -- every non-rank0
-    # process gets an EMPTY dict back, so the lerp itself must only run on
-    # rank 0; other ranks pass `{}` through to the scatter/load step below,
-    # which fills their shards via broadcast-from-rank0.
-    if not dist.is_initialized() or dist.get_rank() == 0:
-        student_params = _fsdp2_full_param_state_dict_rank0(student)
-        teacher_params = _fsdp2_full_param_state_dict_rank0(teacher)
-        merged = {k: teacher_params[k].mul_(1 - alpha).add_(student_params[k], alpha=alpha) for k in teacher_params}
-    else:
-        _fsdp2_full_param_state_dict_rank0(student)  # must still be called collectively on every rank
-        _fsdp2_full_param_state_dict_rank0(teacher)
-        merged = {}
-    _fsdp2_load_param_state_dict(teacher, merged)
+    # student and teacher are sharded by the same code over the same mesh, so parameter i holds the same
+    # slice of the same tensor on every rank: lerp the local shards in place on the GPU, no communication.
+    # (Gathering the full state dict to rank 0 and lerping on CPU also worked, but is far slower and,
+    # with stochastic rounding, needs a random number per parameter on the host.)
+    # The root module's own parameters (e.g. the vision position embedding) stay all-gathered after a
+    # forward that has no backward (the teacher's), so to_local() would return the full tensor. Reshard first.
+    for m in (student, teacher):
+        if hasattr(m, "reshard"):
+            m.reshard()
+    student_params = dict(student.named_parameters())
+    for name, p_teacher in teacher.named_parameters():
+        p_student = student_params.get(name)
+        if p_student is None:
+            raise ValueError(f"ema_update: teacher parameter {name!r} has no counterpart in the student")
+        t_local = p_teacher.to_local() if hasattr(p_teacher, "to_local") else p_teacher.data
+        s_local = p_student.to_local() if hasattr(p_student, "to_local") else p_student.data
+        if t_local.shape != s_local.shape:
+            raise ValueError(
+                f"ema_update: {name!r} is sharded differently in student {tuple(s_local.shape)} and "
+                f"teacher {tuple(t_local.shape)}"
+            )
+        with torch.no_grad():
+            lerp_into_(t_local, s_local, alpha)

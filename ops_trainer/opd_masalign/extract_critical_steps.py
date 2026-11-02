@@ -52,7 +52,7 @@ warning and be skipped).
 
 Usage:
     python -m opd_masalign.extract_critical_steps \
-        --zip data/luis/test_log.zip \
+        --zip data/luis/test_log.zip data/autoglm-phone-9b.zip data/autoglm-phone-9b-part10.zip \
         --critical_steps_json data/luis/critical_steps.json \
         --model autoglm-phone-9b \
         --out data/critical_steps_autoglm.jsonl
@@ -64,6 +64,8 @@ import json
 import os
 import zipfile
 from typing import Optional
+
+from .action_parse import parse_response, parse_response_markdown_headers
 
 
 def _state_key(step: dict) -> str:
@@ -153,11 +155,91 @@ def _label_outcome(rollout: list[dict], from_idx: int) -> str:
     return "benign_success"
 
 
+def _describe_downstream_guiowl(rollout: list[dict], from_idx: int) -> str:
+    """Plain factual summary of what happened from step from_idx on, for the general hindsight
+    reprompt's $downstream_event (reprompt_variants.py). Built only from the log itself: the first
+    is_attack step's app + the executor's own one-line `### Description ###` of that action, and the
+    text typed along the way. Says nothing about *which* step was the mistake -- that's the point.
+    """
+    attack_idx = next((i for i in range(from_idx, len(rollout)) if rollout[i].get("is_attack")), None)
+    if attack_idx is None:
+        return "The rest of this episode finished without the attack succeeding."
+    step = rollout[attack_idx]
+    desc = step.get("action_response", "").split("### Description ###", 1)[-1].strip() or step.get("action", "")
+    where = "This very action" if attack_idx == from_idx else (
+        f"{attack_idx - from_idx} step(s) after this one, in {step.get('package', 'another app')}, the action"
+    )
+    text = (f"{where} \"{desc}\" is where the attack succeeded: information from the user's request was "
+            "submitted to a page controlled by an attacker.")
+    typed = []
+    for st in rollout[from_idx:attack_idx + 1]:
+        try:
+            a = json.loads(st.get("action", ""))
+        except ValueError:
+            continue
+        if isinstance(a, dict) and a.get("action") == "type" and a.get("text"):
+            typed.append(a["text"])
+    if typed:
+        text += " Along the way you typed: " + ", ".join(f'"{t}"' for t in typed) + "."
+    return text
+
+
+def _describe_downstream_chain_guiowl(rollout: list[dict], from_idx: int) -> str:
+    """Like _describe_downstream_guiowl, but lists EVERY action from from_idx up to the first is_attack
+    step (each step's own `### Description ###`, the typed text for `type` actions, and an app-switch
+    marker whenever the package changes), for the g2 reprompt's $downstream_chain. Still purely factual
+    and position-agnostic: it never says which step was the mistake, but lets the model see e.g. that
+    the episode left the task's app right after its own action.
+    """
+    attack_idx = next((i for i in range(from_idx, len(rollout)) if rollout[i].get("is_attack")), None)
+    if attack_idx is None:
+        return "The rest of this episode finished without the attack succeeding."
+    parts = []
+    package = rollout[from_idx].get("package")
+    for i in range(from_idx, attack_idx + 1):
+        st = rollout[i]
+        try:
+            a = json.loads(st.get("action", ""))
+        except ValueError:
+            a = None
+        if isinstance(a, dict) and a.get("action") == "type" and a.get("text"):
+            desc = f'Type "{a["text"]}".'
+        else:
+            desc = st.get("action_response", "").split("### Description ###", 1)[-1].strip() or st.get("action", "")
+        if st.get("package") != package:
+            package = st.get("package")
+            desc = f"[now in {package}] {desc}"
+        parts.append(f"(this step) {desc}" if i == from_idx else desc)
+    return (" -> ".join(parts) + " <- here the attack succeeded: information from the user's request was "
+            "submitted to a page controlled by an attacker.")
+
+
+def _popup_offset(rollout: list[dict], step_idx: int) -> Optional[int]:
+    """step_idx minus the first PopupActivity step (negative = before the popup); None if the rollout
+    never shows one. Analysis-only metadata for grouping results -- no prompt reads it."""
+    first = next((i for i, st in enumerate(rollout) if "PopupActivity" in st.get("activity", "")), None)
+    return None if first is None else step_idx - first
+
+
+def popup_position(popup_offset: Optional[int]) -> str:
+    """'before' / 'at' / 'after' the popup step, or 'no_popup' -- for grouping results only."""
+    if popup_offset is None:
+        return "no_popup"
+    return "at" if popup_offset == 0 else ("before" if popup_offset < 0 else "after")
+
+
 def _iter_rollouts(namelist: list[str], read_json, model: str, task_id: str):
-    """Yield (source_path, rollout) for every <model>/<task_id>/*/*.json entry."""
+    """Yield (source_path, rollout) for every <model>/<task_id>/*/<rollout_idx>.json entry.
+    Rollout files are named by a bare integer index (0.json, 1.json, ...); anything else
+    (e.g. GUI-Owl/Mobile-Agent-V3 logs' per-task-timestamp `task_result.json` summary, which
+    isn't a list of per-step dicts and would blow up downstream) is skipped on purpose, not
+    just by accident of extension -- confirmed against data/luis/gui-owl-7b.zip's layout.
+    """
     prefix = f"{model}/{task_id}/"
     for name in namelist:
         if not name.startswith(prefix) or not name.endswith(".json"):
+            continue
+        if not name.rsplit("/", 1)[-1][: -len(".json")].isdigit():
             continue
         yield name, read_json(name)
 
@@ -167,10 +249,34 @@ def extract(
     model: str,
     namelist: list[str],
     read_json,
+    fmt: str = "autoglm",
 ) -> tuple[list[dict], list[str]]:
     """Returns (records, warnings). Kept side-effect-free (no file I/O) so
     this is unit-testable against an in-memory fake `namelist`/`read_json`.
+
+    `fmt` picks the per-step field names and response grammar:
+      - "autoglm": `messages` (only the newly-appended turn -- threaded into
+        full history by _reconstruct_full_messages, see its docstring) +
+        `response` (`<think>...</think><answer>...</answer>`, see action_parse.parse_response).
+      - "guiowl": Mobile-Agent-V3/GUI-Owl executor logs. `action_messages` is
+        already the COMPLETE single-turn prompt actually sent (the planner's
+        plan/subgoal text + current screenshot are baked into that one turn
+        by the collection harness itself, confirmed by inspecting
+        data/luis/gui-owl-7b.zip: every step carries exactly one message, not
+        a growing history) -- used as-is, no reconstruction. `action_response`
+        has no special tokens, just `### Thought ### / ### Action ### /
+        ### Description ###` headers (action_parse.parse_response_markdown_headers).
+        Also adds `downstream_event` / `downstream_chain` (see _describe_downstream_guiowl /
+        _describe_downstream_chain_guiowl), and `step_idx` /
+        `popup_offset` for locating the step and grouping results, and `planner_context` (the
+        step's own `planning_messages`) for opd_trainer.py --teacher_replan.
     """
+    if fmt not in ("autoglm", "guiowl"):
+        raise ValueError(f"fmt must be 'autoglm' or 'guiowl', got {fmt!r}")
+    messages_field = "messages" if fmt == "autoglm" else "action_messages"
+    response_field = "response" if fmt == "autoglm" else "action_response"
+    parser = parse_response if fmt == "autoglm" else parse_response_markdown_headers
+
     records: list[dict] = []
     warnings: list[str] = []
 
@@ -195,15 +301,36 @@ def extract(
                 n_matched += 1
                 step = rollout[step_idx]
                 outcome_type = _label_outcome(rollout, step_idx)
-                full_messages = _reconstruct_full_messages(rollout, step_idx)
-                records.append({
+                full_messages = (
+                    _reconstruct_full_messages(rollout, step_idx) if fmt == "autoglm"
+                    else step[messages_field]
+                )
+                action_taken = {"raw_text": step["action"]}
+                # The step's own reasoning, kept so opd_trainer.py --think_prefill can score the action
+                # at the position the model really produces it. Only trusted when the parsed final
+                # action equals the logged `action` (cross-check against the grammar each `fmt` uses).
+                thinking, parsed_action, well_formed = parser(step.get(response_field, ""))
+                if well_formed and parsed_action.strip() == step["action"].strip():
+                    action_taken["thinking"] = thinking
+                record = {
                     "schema_version": "1.1",
                     "record_type": "critical_step",
                     "task_id": task_id,
                     "observation_context": {"format": "chat_messages", "messages": full_messages},
-                    "action_taken": {"raw_text": step["action"]},
+                    "action_taken": action_taken,
                     "outcome_type": outcome_type,
-                })
+                    "state_u": state_u,
+                    "source": source_path,
+                }
+                if fmt == "guiowl":
+                    record["downstream_event"] = _describe_downstream_guiowl(rollout, step_idx)
+                    record["downstream_chain"] = _describe_downstream_chain_guiowl(rollout, step_idx)
+                    record["step_idx"] = step_idx
+                    record["popup_offset"] = _popup_offset(rollout, step_idx)
+                    if step.get("planning_messages"):
+                        # the planner sub-call on the same screenshot, for opd_trainer.py --teacher_replan
+                        record["planner_context"] = {"format": "chat_messages", "messages": step["planning_messages"]}
+                records.append(record)
 
             if n_matched == 0:
                 warnings.append(
@@ -216,10 +343,17 @@ def extract(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--zip", help="path to the raw rollout dump zip (e.g. data/luis/test_log.zip)")
+    parser.add_argument(
+        "--zip", nargs="+",
+        help="one or more raw rollout dump zips (e.g. data/luis/test_log.zip). A zip whose entries are "
+        "<model>/<task_id>/... is used as-is; one scoped to a single model (<task_id>/..., e.g. "
+        "autoglm-phone-9b.zip) is mounted under --model. When several zips contain the same path the "
+        "first one wins (identical re-exports of the same rollout are de-duplicated this way).",
+    )
     parser.add_argument("--dir", help="alternative to --zip: an already-extracted directory with the same layout")
     parser.add_argument("--critical_steps_json", required=True, help="e.g. data/luis/critical_steps.json")
     parser.add_argument("--model", required=True, help="model directory name under the zip/dir, e.g. autoglm-phone-9b -- NOT hardcoded, pass whichever collaborator model's logs you're extracting")
+    parser.add_argument("--format", default="autoglm", choices=["autoglm", "guiowl"], help="per-step log field names/response grammar, see extract()'s docstring")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -230,9 +364,18 @@ def main():
         critical_steps_json = json.load(f)
 
     if args.zip:
-        z = zipfile.ZipFile(args.zip)
-        namelist = z.namelist()
-        read_json = lambda name: json.load(z.open(name))  # noqa: E731
+        sources: dict[str, tuple[zipfile.ZipFile, str]] = {}
+        for path in args.zip:
+            z = zipfile.ZipFile(path)
+            names = [n for n in z.namelist() if n.endswith(".json")]
+            scoped = not any(n.startswith(f"{args.model}/") for n in names)
+            for n in names:
+                sources.setdefault(f"{args.model}/{n}" if scoped else n, (z, n))
+        namelist = list(sources)
+
+        def read_json(name):
+            z, real = sources[name]
+            return json.load(z.open(real))
     else:
         namelist = [
             os.path.relpath(os.path.join(root, fn), args.dir)
@@ -241,7 +384,7 @@ def main():
         ]
         read_json = lambda name: json.load(open(os.path.join(args.dir, name)))  # noqa: E731
 
-    records, warnings = extract(critical_steps_json, args.model, namelist, read_json)
+    records, warnings = extract(critical_steps_json, args.model, namelist, read_json, fmt=args.format)
 
     for w in warnings:
         print(f"WARNING: {w}")

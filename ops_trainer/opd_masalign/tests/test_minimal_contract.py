@@ -31,7 +31,7 @@ def test_minimal_record_has_no_hard_errors_only_advisory_notes():
 
 
 def test_reprompt_falls_back_to_generic_outcome_summary_and_omits_alternatives():
-    text = build_reprompt_text(MINIMAL_RECORD)
+    text = build_reprompt_text(MINIMAL_RECORD, "v0")
     assert "tap 'Update Now' on the popup" in text
     assert "malicious" in text.lower() or "injected" in text.lower()  # generic attack_success fallback
     assert "Alternative actions" not in text  # no counterfactual_note/sibling_branches given
@@ -40,8 +40,9 @@ def test_reprompt_falls_back_to_generic_outcome_summary_and_omits_alternatives()
 def test_reprompt_uses_real_outcome_summary_when_present():
     record = dict(MINIMAL_RECORD)
     record["outcome_summary"] = "The fake update button installed a malicious APK."
-    text = build_reprompt_text(record)
-    assert "installed a malicious APK" in text
+    for variant in ("v0", None):
+        text = build_reprompt_text(record, variant)
+        assert "installed a malicious APK" in text
 
 
 def test_reprompt_includes_alternatives_from_sibling_branches_when_present():
@@ -50,7 +51,7 @@ def test_reprompt_includes_alternatives_from_sibling_branches_when_present():
         {"action_summary": "Tap the popup's X to dismiss it", "is_taken": False, "child_lrs": -3.0},
         {"action_summary": "Tap 'Update Now'", "is_taken": True, "child_lrs": 0.0},
     ]
-    text = build_reprompt_text(record)
+    text = build_reprompt_text(record, "v0")
     assert "Tap the popup's X to dismiss it" in text
 
 
@@ -59,3 +60,12 @@ def test_build_teacher_messages_appends_one_hindsight_turn():
     assert len(messages) == len(MINIMAL_RECORD["observation_context"]["messages"]) + 1
     assert messages[-1]["role"] == "user"
     assert "[Hindsight review]" in messages[-1]["content"]
+
+
+def test_default_reprompt_is_attack_type_general_and_prefers_downstream_chain():
+    record = dict(MINIMAL_RECORD)
+    record["downstream_chain"] = "(this step) Tap Verify. -> [now in com.android.chrome] Type \"1234\"."
+    text = build_reprompt_text(record)
+    assert "tap 'Update Now' on the popup" in text
+    assert "[now in com.android.chrome]" in text
+    assert "floating window" in text and "dialog box on the screen" not in text  # not popup-only

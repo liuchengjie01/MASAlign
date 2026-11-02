@@ -3,7 +3,7 @@ from glob import glob
 import json
 import os
 
-from critical_extractor.utils.prs_graph import MDPGraph
+from utils.prs_graph import MDPGraph
 
 
 def load_dataset(base_path, dataset_name):

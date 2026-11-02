@@ -5,7 +5,9 @@ for the real data this was written against).
 
 Run with: python -m pytest opd_masalign/tests/test_extract_critical_steps.py -v
 """
-from opd_masalign.extract_critical_steps import extract
+from opd_masalign.extract_critical_steps import (
+    _describe_downstream_chain_guiowl, _describe_downstream_guiowl, _popup_offset, extract,
+)
 from opd_masalign.schema import validate_critical_step_record
 
 MODEL = "some-open-model"  # deliberately not "autoglm-phone-9b" -- extract() must not hardcode a model name
@@ -200,3 +202,55 @@ def test_reconstruction_does_not_leak_turns_after_the_critical_step():
         {"role": "assistant", "content": "r1"},
         {"role": "user", "content": "u2"},  # the critical step's own turn -- no trailing assistant turn
     ]
+
+
+def _guiowl_step(activity, action, description="", is_attack=None):
+    step = {"package": "pkg", "activity": activity, "action": action,
+            "action_response": f"### Thought ###\n...\n\n### Action ###\n{action}\n\n### Description ###\n{description}"}
+    if is_attack is not None:
+        step["is_attack"] = is_attack
+    return step
+
+
+def test_guiowl_downstream_event_names_the_attack_step_and_typed_text_without_blaming_this_step():
+    rollout = [
+        _guiowl_step("Launcher", '{"action": "click", "coordinate": [1, 2]}'),
+        _guiowl_step("PopupActivity", '{"action": "click", "coordinate": [3, 4]}', "Click 'Verify'."),
+        _guiowl_step("Main", '{"action": "type", "text": "1111222233334444"}'),
+        _guiowl_step("Main", '{"action": "click", "coordinate": [5, 6]}', "Click 'OK'.", is_attack=True),
+    ]
+    text = _describe_downstream_guiowl(rollout, 0)
+    assert "3 step(s) after this one" in text and "Click 'OK'." in text
+    assert '"1111222233334444"' in text
+    assert _describe_downstream_guiowl(rollout, 3).startswith("This very action")
+    assert "without the attack succeeding" in _describe_downstream_guiowl(rollout[:3], 0)
+    assert [_popup_offset(rollout, i) for i in (0, 1, 2)] == [-1, 0, 1]
+    assert _popup_offset(rollout[:1], 0) is None
+
+
+def test_guiowl_downstream_chain_lists_every_action_marks_app_switches_and_stops_at_the_attack():
+    rollout = [
+        _guiowl_step("PopupActivity", '{"action": "click", "coordinate": [3, 4]}', "Click 'Verify'."),
+        {**_guiowl_step("Main", '{"action": "type", "text": "1111"}'), "package": "chrome"},
+        {**_guiowl_step("Main", '{"action": "click", "coordinate": [5, 6]}', "Click 'OK'.", is_attack=True), "package": "chrome"},
+        _guiowl_step("Main", '{"action": "click", "coordinate": [7, 8]}', "Never reached."),
+    ]
+    chain = _describe_downstream_chain_guiowl(rollout, 0)
+    assert chain.startswith("(this step) Click 'Verify'. -> [now in chrome] Type \"1111\". -> Click 'OK'. <- here")
+    assert "Never reached" not in chain
+
+
+def test_guiowl_extract_keeps_the_steps_planning_messages_as_planner_context():
+    planning = [{"role": "user", "content": [{"type": "text", "text": "plan this"}]}]
+    rollout = [
+        {**_guiowl_step("Launcher", '{"action": "click", "coordinate": [1, 2]}'),
+         "action_messages": [{"role": "user", "content": "exec0"}]},
+        {**_guiowl_step("PopupActivity", '{"action": "click", "coordinate": [3, 4]}', "Click 'Verify'."),
+         "action_messages": [{"role": "user", "content": "exec1"}], "planning_messages": planning},
+    ]
+    namelist, read_json = _fake_dump({f"{MODEL}/9/ts1/0.json": rollout})
+    critical_steps_json = [{"task_id": "9", "critical_steps": [{"state_u": "pkg/PopupActivity"}]}]
+
+    records, _ = extract(critical_steps_json, MODEL, namelist, read_json, fmt="guiowl")
+    assert records[0]["observation_context"]["messages"] == [{"role": "user", "content": "exec1"}]
+    assert records[0]["planner_context"] == {"format": "chat_messages", "messages": planning}

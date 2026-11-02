@@ -10,8 +10,27 @@
 # GPU-specific issue, torch/transformers/accelerate versions are the first
 # things to reconsider; everything else here is hardware-agnostic.
 #
-# transformers>=4.46 is required for --vlm (Idefics3ForConditionalGeneration
-# / SmolVLM support did not exist in earlier 4.44.x).
+# transformers>=4.46 is the floor for --vlm (Idefics3ForConditionalGeneration
+# / SmolVLM didn't exist before), but pinned to 5.0.0 because a real
+# collaborator VLM (AutoGLM-Phone-9B, architecture "glm4v") needs much more
+# than that floor -- three separate issues, only the first two of which are
+# fixed by a newer transformers version at all:
+#   1. glm4v's config/processor classes weren't registered before ~4.53 --
+#      on an older version AutoProcessor doesn't error, it silently falls
+#      back to a bare tokenizer (this is why opd_trainer.py hard-checks
+#      `hasattr(processor, "tokenizer")` right after loading one).
+#   2. glm4v's published config uses the newer `rope_parameters` key
+#      (confirmed via HF's config.json for zai-org/AutoGLM-Phone-9B); 4.57.1's
+#      Glm4vTextConfig still only reads the older `rope_scaling` key, so
+#      `self.rope_scaling` silently stays None and crashes deep in attention
+#      (`self.rope_scaling["mrope_section"]`). 5.0.0 reads `rope_parameters`.
+#   3. opd_trainer.py loads the model via AutoModelForImageTextToText, not
+#      the older AutoModelForVision2Seq -- glm4v is registered ONLY in the
+#      newer class's model mapping. This one was a real code bug (fixed),
+#      not a transformers-version problem, at any version of transformers.
+# All three were verified end-to-end against the real 9B checkpoint on a
+# real GPU (forward + backward, finite loss and gradients) before pinning
+# to 5.0.0, not inferred from documentation.
 #
 # torch: install the CUDA build for your cluster instead of plain `pip
 # install -r requirements.txt` for this line, e.g. for CUDA 12.1:
@@ -20,12 +39,16 @@
 # index URL accordingly -- see https://pytorch.org/get-started/previous-versions/)
 torch==2.4.1
 
-accelerate==0.34.2
-transformers==4.49.0
-tokenizers==0.21.4
+accelerate==1.15.0  # transformers 5.0.0 requires accelerate>=1.1.0 for device_map/tp_plan; an older accelerate
+                    # is importable but transformers.utils.is_accelerate_available() silently returns False,
+                    # so `--model_name ... device_map=...` fails deep inside from_pretrained() with
+                    # "Using a `device_map`... requires accelerate" even though `pip show accelerate` looks fine.
+transformers==5.0.0
+tokenizers==0.22.2
 safetensors==0.8.0
-huggingface_hub==0.36.2
+huggingface_hub==1.32.0
 pillow==12.3.0  # --vlm only: decoding observation_context image_url blocks
+torchvision==0.19.1  # required by some VLM processors (e.g. GLM-4V's video preprocessor import), even for image-only use
 
 numpy==1.26.4
 PyYAML==6.0.3
@@ -52,3 +75,5 @@ hf-xet==1.6.0
 pytest==8.3.3
 iniconfig==2.3.0
 pluggy==1.6.0
+
+matplotlib==3.11.2  # only for opd_masalign/plot_metrics.py (画metrics.jsonl里的loss曲线)

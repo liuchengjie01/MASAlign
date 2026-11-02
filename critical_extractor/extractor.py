@@ -3,9 +3,10 @@ import argparse
 import glob
 import json
 import os
+import re
 
-from critical_extractor.utils.prs_graph import MDPGraph
-from critical_extractor.utils.tool import print_graph, save_mermaid, get_canonical_node_id
+from utils.prs_graph import MDPGraph
+from utils.tool import print_graph, save_mermaid, get_canonical_node_id
 
 
           
@@ -65,16 +66,21 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--data-dir',
-        required=True,
         type=str,
         help="multiple rollout attack data dir"
     )
     parser.add_argument(
         '--benign-dir',
-        required=True,
         default="",
         type=str,
         help='multiple rollout benign data dir'
+    )
+
+    parser.add_argument(
+        '--mmd-dir',
+        type=str,
+        default=f'critical_extractor{os.sep}mmds'
+        help='dir to save mmd file'
     )
 
     args = parser.parse_args()
@@ -84,15 +90,16 @@ def main():
     if not os.path.exists(args.data_dir):
         print(f"Dir {args.data_dir} not exist")
         exit(1)
-    ids = ["31","9"]
+    ids = [str(i) for i in range(1, 76)]
     results = []
+    # ids = ["10"]
     for id in ids:
-        task_dir = f'{args.data_dir}{os.sep}*{os.sep}*{os.sep}{id}'
+        task_dir = f'{args.data_dir}{os.sep}*{os.sep}{id}'
         self_task_dir = f'{args.benign_dir}{os.sep}*{os.sep}{id}'
         p = f'{task_dir}{os.sep}*{os.sep}*.json'
         sp = f'{self_task_dir}{os.sep}*{os.sep}*.json'
-        fs = glob.glob(sp, recursive=True)
-
+        fs = glob.glob(sp, recursive=True) + glob.glob(p, recursive=True)
+        fs = [p for p in fs if re.fullmatch(r'\d+', os.path.splitext(os.path.basename(p))[0])]
         print(f'Task {id} has total {len(fs)} trajectories.')
         graph = MDPGraph()
         for file in fs:
@@ -130,7 +137,7 @@ def main():
         graph.compute_lrs_optimized()
         print("Compute Completed")
         # graph.print_graph_details()
-        save_mermaid(graph, f"{id}.mmd")
+        save_mermaid(graph, f"{args.mmd_dir}{os.sep}{id}.mmd")
         critical_steps = print_graph(graph)
         results.append({"task_id": id, "critical_steps": critical_steps})
     with open("critical_steps.json", 'w', encoding='utf-8') as f:
