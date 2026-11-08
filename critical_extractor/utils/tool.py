@@ -9,7 +9,11 @@ from PIL import Image
 from utils.prs_graph import MDPGraph
 
 
-def save_mermaid(graph: MDPGraph, output_filepath: str = "mdp_graph.mmd"):
+def save_mermaid(
+    graph: MDPGraph,
+    output_filepath: str = "mdp_graph.mmd",
+    critical_node_ids=None,
+):
     """
     导出纯净、兼容性极强的 Mermaid Flowchart 文件 (.mmd)
     自动应用 Times New Roman 字体与定制的流程图样式
@@ -64,19 +68,32 @@ def save_mermaid(graph: MDPGraph, output_filepath: str = "mdp_graph.mmd"):
     lines.append("")
     lines.append("    %% 节点着色与样式定义")
     lines.append("    classDef attackedNode fill:#ffcccc,stroke:#ff0000,stroke-width:2px,color:#990000;")
-    lines.append("    classDef safeSink fill:#ccffcc,stroke:#009900,stroke-width:2px,color:#006600;")
-    lines.append("    classDef normalNode fill:#f4f4f4,stroke:#333333,stroke-width:1.5px,color:#111111;")
+    lines.append("    classDef criticalNode fill:#fff2a8,stroke:#d6a700,stroke-width:2px,color:#6b5200;")
+    lines.append("    classDef uncoloredNode fill:none,stroke:#333333,stroke-width:1.5px,color:#111111;")
 
-    attacked_ids = [clean_id(n.state_id) for n in graph.nodes.values() if n.is_finished and n.is_attacked]
-    safe_ids = [clean_id(n.state_id) for n in graph.nodes.values() if n.is_finished and not n.is_attacked]
-    normal_ids = [clean_id(n.state_id) for n in graph.nodes.values() if not n.is_finished]
+    critical_node_ids = set(critical_node_ids or [])
+    attacked_state_ids = {
+        node.state_id for node in graph.nodes.values() if node.is_attacked
+    }
+    attacked_ids = [clean_id(state_id) for state_id in attacked_state_ids]
+    critical_ids = [
+        clean_id(state_id)
+        for state_id in critical_node_ids
+        if state_id in graph.nodes and state_id not in attacked_state_ids
+    ]
+    uncolored_ids = [
+        clean_id(state_id)
+        for state_id in graph.nodes
+        if state_id not in attacked_state_ids
+        and state_id not in critical_node_ids
+    ]
 
     if attacked_ids:
         lines.append(f"    class {','.join(attacked_ids)} attackedNode;")
-    if safe_ids:
-        lines.append(f"    class {','.join(safe_ids)} safeSink;")
-    if normal_ids:
-        lines.append(f"    class {','.join(normal_ids)} normalNode;")
+    if critical_ids:
+        lines.append(f"    class {','.join(critical_ids)} criticalNode;")
+    if uncolored_ids:
+        lines.append(f"    class {','.join(uncolored_ids)} uncoloredNode;")
 
     # 写入文件（确保 utf-8 编码，并且文件内不包含额外的 Markdown ```mermaid 包裹）
     os.makedirs(os.path.dirname(os.path.abspath(output_filepath)), exist_ok=True)
@@ -94,6 +111,8 @@ def print_graph(graph: MDPGraph):
     print("提取到的关键对：")
     critical_steps = []
     for idx, p in enumerate(pairs):
+        if "com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity" in p['state_u']:
+            continue
         critical_steps.append({
             "state_u": p['state_u'],
         })

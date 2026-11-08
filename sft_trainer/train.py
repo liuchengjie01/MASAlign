@@ -4,8 +4,10 @@ import copy
 import glob
 import io
 import json
+import math
 import os
 import random
+import time
 from types import SimpleNamespace
 
 # This trainer is PyTorch-only. Avoid importing an incompatible optional
@@ -17,7 +19,17 @@ import torch
 import yaml
 from PIL import Image
 from torch.utils.data import Dataset
-from transformers import AutoModelForCausalLM, AutoProcessor, Trainer, TrainingArguments
+from transformers import (
+    AutoProcessor,
+    Trainer,
+    TrainerCallback,
+    TrainingArguments,
+)
+
+try:
+    from transformers import AutoModelImageTextToText
+except ImportError:
+    from transformers import AutoModelForImageTextToText as AutoModelImageTextToText
 
 
 def load_image_from_data_uri(image_url):
@@ -34,12 +46,13 @@ class SFTDataset(Dataset):
     """One sample per assistant turn, with only its final response supervised."""
 
     PHASES = (
+        ("messages", "response"),
         ("planning_messages", "planning_response"),
         ("action_messages", "action_response"),
         ("reflect_messages", "reflect_response"),
     )
 
-    def __init__(self, data_path, processor, max_length=4096, system_prompt=None,
+    def __init__(self, data_path, processor, max_length=4096, system_prompt=None, data_type="",
                  max_images=3, debug=False):
         self.processor = processor
         self.tok = processor.tokenizer
@@ -81,6 +94,8 @@ class SFTDataset(Dataset):
 
         if debug:
             self.samples = self.samples[:5]
+        if not self.samples:
+            raise ValueError("No safe assistant-turn SFT samples were found")
 
     def __len__(self):
         return len(self.samples)
@@ -141,9 +156,30 @@ class SFTDataset(Dataset):
             return_tensors="pt", padding=False, truncation=False,
         )
         prefix_ids = prefix_output["input_ids"][0].tolist()
-        if input_ids[:len(prefix_ids)] != prefix_ids:
-            raise RuntimeError("The tokenized prompt is not a prefix of the full sample")
-        return [-100] * len(prefix_ids) + input_ids[len(prefix_ids):]
+        # Tokenizing the prompt by itself may append an EOS token, while the
+        # same text inside the full sample is followed by the assistant target.
+        # A tokenizer may also merge one token across that text boundary. Use
+        # the common token prefix as the loss boundary instead of requiring the
+        # independently tokenized sequences to be exactly prefix-identical.
+        prompt_length = 0
+        for prefix_id, full_id in zip(prefix_ids, input_ids):
+            if prefix_id != full_id:
+                break
+            prompt_length += 1
+
+        boundary_difference = len(prefix_ids) - prompt_length
+        max_boundary_difference = max(8, len(prefix_ids) // 100)
+        if prompt_length == 0 or boundary_difference > max_boundary_difference:
+            raise RuntimeError(
+                "Prompt/full tokenization diverges before the assistant boundary: "
+                f"matched={prompt_length}, prompt_tokens={len(prefix_ids)}, "
+                f"boundary_difference={boundary_difference}. Check the model chat template."
+            )
+
+        labels = [-100] * prompt_length + input_ids[prompt_length:]
+        if not any(label != -100 for label in labels):
+            raise ValueError("SFT sample contains no supervised target tokens")
+        return labels
 
     def _encode_messages(self, messages):
         if self.system_prompt and (not messages or messages[0].get("role") != "system"):
@@ -250,6 +286,142 @@ def _to_ns(value):
     return value
 
 
+def _to_dict(value):
+    if isinstance(value, SimpleNamespace):
+        return {key: _to_dict(item) for key, item in vars(value).items()}
+    if isinstance(value, list):
+        return [_to_dict(item) for item in value]
+    return value
+
+
+def _get_module(model, path):
+    module = model
+    for name in path.split("."):
+        module = getattr(module, name, None)
+        if module is None:
+            return None
+    return module
+
+
+def get_fsdp_layer_classes(model):
+    """Find text and vision transformer block classes for per-block FSDP wrapping."""
+    decoder_paths = (
+        "model.layers",
+        "model.language_model.layers",
+        "model.text_model.layers",
+    )
+    vision_paths = (
+        "model.visual.blocks",
+        "model.vision_model.encoder.layers",
+    )
+    class_names = []
+    decoder_found = False
+    for path in decoder_paths + vision_paths:
+        blocks = _get_module(model, path)
+        if blocks is None or len(blocks) == 0:
+            continue
+        if path in decoder_paths:
+            decoder_found = True
+        class_name = type(blocks[0]).__name__
+        if class_name not in class_names:
+            class_names.append(class_name)
+    if not decoder_found:
+        raise ValueError(
+            "FSDP auto-wrap could not find the model's decoder layers. "
+            "Add its transformer block path to get_fsdp_layer_classes()."
+        )
+    return class_names
+
+
+class JsonlMetricsCallback(TrainerCallback):
+    """Persist rank-0 Trainer logs in a plotting-friendly JSONL file."""
+
+    def __init__(self, output_dir, append=False):
+        self.path = os.path.join(output_dir, "metrics.jsonl")
+        self.append = append
+        self.started_at = None
+        self.step_started_at = None
+        self.step_times = []
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        self.started_at = time.perf_counter()
+        if state.is_world_process_zero and not self.append:
+            with open(self.path, "w", encoding="utf-8"):
+                pass
+
+    def on_step_begin(self, args, state, control, **kwargs):
+        self.step_started_at = time.perf_counter()
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if self.step_started_at is not None:
+            self.step_times.append(time.perf_counter() - self.step_started_at)
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if not state.is_world_process_zero or not logs:
+            return
+        row = {"step": state.global_step, **logs}
+        if self.started_at is not None:
+            row["wall_time_s"] = time.perf_counter() - self.started_at
+        if self.step_times:
+            step_time = sum(self.step_times) / len(self.step_times)
+            row["step_time_s"] = step_time
+            effective_batch = (
+                args.per_device_train_batch_size
+                * args.world_size
+                * args.gradient_accumulation_steps
+            )
+            row["samples_per_second"] = effective_batch / step_time
+            self.step_times.clear()
+        if torch.cuda.is_available():
+            row["max_memory_allocated_gb"] = torch.cuda.max_memory_allocated() / 1024 ** 3
+        with open(self.path, "a", encoding="utf-8") as file:
+            file.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def save_vllm_checkpoint(trainer, processor, output_dir, fsdp_enabled):
+    """Save a standard Hugging Face checkpoint that vLLM can load directly."""
+    trainer.accelerator.wait_for_everyone()
+    trainer.model.config.use_cache = True
+
+    if fsdp_enabled:
+        # FSDP2 parameters are distributed across ranks. Every rank must enter
+        # this collective; cpu_offload makes only rank 0 receive the complete
+        # state dict and avoids materializing it in GPU memory.
+        from torch.distributed.checkpoint.state_dict import (
+            StateDictOptions,
+            get_model_state_dict,
+        )
+
+        state_dict = get_model_state_dict(
+            trainer.model,
+            options=StateDictOptions(full_state_dict=True, cpu_offload=True),
+        )
+    else:
+        state_dict = trainer.accelerator.get_state_dict(trainer.model)
+
+    if trainer.is_world_process_zero():
+        model = trainer.accelerator.unwrap_model(trainer.model)
+        model.save_pretrained(
+            output_dir,
+            state_dict=state_dict,
+            safe_serialization=True,
+            max_shard_size="5GB",
+        )
+        processor.save_pretrained(output_dir)
+        has_config = os.path.isfile(os.path.join(output_dir, "config.json"))
+        has_weights = any(
+            name.endswith(".safetensors") for name in os.listdir(output_dir)
+        )
+        if not has_config or not has_weights:
+            raise RuntimeError(
+                "The exported checkpoint is incomplete: expected config.json "
+                "and at least one .safetensors weight file"
+            )
+        print(f"saved vLLM-compatible checkpoint: {output_dir}", flush=True)
+
+    trainer.accelerator.wait_for_everyone()
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Multimodal trajectory SFT")
     parser.add_argument(
@@ -298,22 +470,37 @@ def main():
     config = parse_args()
     set_seed(config.training.seed)
     os.makedirs(config.training.output_dir, exist_ok=True)
+    is_main_process = int(os.environ.get("RANK", "0")) == 0
+    training = config.training
+    fsdp_config = _to_dict(training.fsdp_config)
+    if training.fsdp:
+        fsdp_version = int(fsdp_config.get("fsdp_version", 2))
+        if fsdp_version != 2:
+            raise ValueError(f"This trainer requires FSDP2, got fsdp_version={fsdp_version}")
+        if not isinstance(fsdp_config.get("reshard_after_forward"), bool):
+            raise TypeError("FSDP2 reshard_after_forward must be true or false")
+        # Needed by Transformers 4.x; Transformers 5.x also receives the
+        # explicit fsdp_version below through fsdp_config.
+        os.environ["FSDP_VERSION"] = str(fsdp_version)
 
     processor = AutoProcessor.from_pretrained(
-        config.model.path, trust_remote_code=config.model.trust_remote_code
+        config.model.path,
+        trust_remote_code=config.model.trust_remote_code,
+        max_pixels=config.data.max_pixels,
     )
     tokenizer = processor.tokenizer
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(
+    model = AutoModelImageTextToText.from_pretrained(
         config.model.path,
         torch_dtype=DTYPE_MAP[config.model.torch_dtype],
         trust_remote_code=config.model.trust_remote_code,
         device_map=None,
     )
-    if config.model.gradient_checkpointing:
-        model.gradient_checkpointing_enable()
+    fsdp_layer_classes = get_fsdp_layer_classes(model) if training.fsdp else []
+    if training.gradient_checkpointing:
+        model.config.use_cache = False
 
     if config.lora.enable:
         from peft import LoraConfig, get_peft_model
@@ -325,7 +512,8 @@ def main():
             task_type=config.lora.task_type,
         )
         model = get_peft_model(model, lora_config)
-        model.print_trainable_parameters()
+        if is_main_process:
+            model.print_trainable_parameters()
 
     dataset = SFTDataset(
         config.data.train_jsonl,
@@ -335,9 +523,34 @@ def main():
         max_images=getattr(config.data, "max_images", 3),
         debug=config.runtime.debug,
     )
-    print(f"loaded {len(dataset)} assistant-turn SFT samples")
+    if is_main_process:
+        print(f"loaded {len(dataset)} assistant-turn SFT samples", flush=True)
     collator = SFTCollator(tokenizer)
-    training = config.training
+    if training.fsdp:
+        fsdp_config["transformer_layer_cls_to_wrap"] = fsdp_layer_classes
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    per_rank_samples = math.ceil(len(dataset) / world_size)
+    micro_batches_per_epoch = math.ceil(
+        per_rank_samples / training.per_device_train_batch_size
+    )
+    update_steps_per_epoch = math.ceil(
+        micro_batches_per_epoch / training.gradient_accumulation_steps
+    )
+    total_steps = math.ceil(update_steps_per_epoch * training.num_train_epochs)
+    warmup_steps = math.ceil(total_steps * training.warmup_ratio)
+    if is_main_process:
+        effective_batch = (
+            training.per_device_train_batch_size
+            * world_size
+            * training.gradient_accumulation_steps
+        )
+        print(
+            f"world_size={world_size}, effective_batch_size={effective_batch}, "
+            f"fsdp={training.fsdp or 'disabled'}, wrap_classes="
+            f"{fsdp_config.get('transformer_layer_cls_to_wrap', [])}, "
+            f"total_steps={total_steps}, warmup_steps={warmup_steps}",
+            flush=True,
+        )
     training_args = TrainingArguments(
         output_dir=training.output_dir,
         num_train_epochs=training.num_train_epochs,
@@ -345,15 +558,20 @@ def main():
         per_device_eval_batch_size=training.per_device_eval_batch_size,
         gradient_accumulation_steps=training.gradient_accumulation_steps,
         learning_rate=training.learning_rate,
-        warmup_ratio=training.warmup_ratio,
+        warmup_steps=warmup_steps,
         lr_scheduler_type=training.lr_scheduler_type,
+        logging_strategy=training.logging_strategy,
         logging_steps=training.logging_steps,
+        logging_first_step=training.logging_first_step,
         save_strategy=training.save_strategy,
         save_total_limit=training.save_total_limit,
         bf16=training.bf16,
         fp16=training.fp16,
         gradient_checkpointing=training.gradient_checkpointing,
+        gradient_checkpointing_kwargs=_to_dict(training.gradient_checkpointing_kwargs),
         report_to=training.report_to,
+        fsdp=training.fsdp,
+        fsdp_config=fsdp_config,
         remove_unused_columns=training.remove_unused_columns,
         dataloader_pin_memory=training.dataloader_pin_memory,
         dataloader_num_workers=config.runtime.num_workers,
@@ -364,11 +582,21 @@ def main():
         args=training_args,
         train_dataset=dataset,
         data_collator=collator,
+        callbacks=[
+            JsonlMetricsCallback(
+                training.output_dir,
+                append=training.resume_from_checkpoint is not None,
+            )
+        ],
     )
     trainer.train(resume_from_checkpoint=training.resume_from_checkpoint)
-    trainer.save_model(training.output_dir)
-    tokenizer.save_pretrained(training.output_dir)
-    print("saved:", training.output_dir)
+    trainer.save_state()
+    save_vllm_checkpoint(
+        trainer,
+        processor,
+        training.output_dir,
+        fsdp_enabled=bool(training.fsdp),
+    )
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ __pycache__/
 *.mmd
 critical_steps.json
 **/sft_trainer/data/
-**/opd_trainer/data/
+**/ops_trainer/data/
 
 
 .venv/

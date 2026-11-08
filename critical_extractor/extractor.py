@@ -65,34 +65,37 @@ def test():
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--data-dir',
-        type=str,
-        help="multiple rollout attack data dir"
+    '--data-dir',
+    type=str,
+    help="multiple rollout attack data dir"
     )
     parser.add_argument(
-        '--benign-dir',
-        default="",
-        type=str,
-        help='multiple rollout benign data dir'
+    '--benign-dir',
+    default="",
+    type=str,
+    help='multiple rollout benign data dir'
     )
 
-    parser.add_argument(
-        '--mmd-dir',
-        type=str,
-        default=f'critical_extractor{os.sep}mmds'
-        help='dir to save mmd file'
-    )
-
+    parser.add_argument('--mmd-dir', type=str, default=f'critical_extractor{os.sep}mmds', help='dir to save mmd file')
     args = parser.parse_args()
     return args
+
 def main():
+    def is_home_action(action):
+        """Return whether an action navigates back to the device home screen."""
+        if "system_button" in action and "home" in action:
+            return True
+        if "system_button" in action and "Home" in action:
+            return True
+        return False
+
     args = parse_args()
     if not os.path.exists(args.data_dir):
         print(f"Dir {args.data_dir} not exist")
         exit(1)
-    ids = [str(i) for i in range(1, 76)]
+    ids = [str(i) for i in range(1, 76)] + [str(i) for i in range(111, 191)]
     results = []
-    # ids = ["10"]
+    # ids = ["128"]
     for id in ids:
         task_dir = f'{args.data_dir}{os.sep}*{os.sep}{id}'
         self_task_dir = f'{args.benign_dir}{os.sep}*{os.sep}{id}'
@@ -107,12 +110,17 @@ def main():
                 steps = json.load(f)
                 
                 for idx, step in enumerate(steps):
+                    # debug
+                    if step.get("activity") == "com.booking.payment.component.ui.screen.cardstoring.CardStoringFlowActivity":
+                        print(f"Found CardStoringFlowActivity in task {id}, step {idx}")
                     # add node
                     node_state_id = get_canonical_node_id(step.get("package", "unknown"), step.get("activity", "unknown"))
+                    if node_state_id == "UNKNOWN_NODE":
+                        continue
                     is_last_step = (idx == len(steps)-1)
                     is_attacked = step.get("is_attack", False)
-                    # if is_attacked:
-                    #     print(node_state_id)
+                    if is_attacked:
+                        print(node_state_id)
                     graph.add_node(
                         node_state_id,
                         "",
@@ -126,13 +134,13 @@ def main():
                     dest_id = idx+1
                     src_step = steps[src_id]
                     dest_step = steps[dest_id]
+                    action = src_step.get("action")
+                    if is_home_action(action):
+                        continue
                     src_state_id = get_canonical_node_id(src_step.get("package", "unknown"), src_step.get("activity", "unknown"))
                     dest_state_id = get_canonical_node_id(dest_step.get("package", "unknown"), dest_step.get("activity", "unknown"))
-                    graph.add_edge(
-                        src_state_id,
-                        dest_state_id,
-                        1
-                    )
+                    if src_state_id != dest_state_id and src_state_id != "UNKNOWN_NODE" and dest_state_id != "UNKNOWN_NODE":
+                        graph.add_edge(src_state_id, dest_state_id, 1)
 
         graph.compute_lrs_optimized()
         print("Compute Completed")
@@ -140,7 +148,7 @@ def main():
         save_mermaid(graph, f"{args.mmd_dir}{os.sep}{id}.mmd")
         critical_steps = print_graph(graph)
         results.append({"task_id": id, "critical_steps": critical_steps})
-    with open("critical_steps.json", 'w', encoding='utf-8') as f:
+    with open(f"critical_extractor{os.sep}critical_steps_ghostei.json", 'w', encoding='utf-8') as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     
 

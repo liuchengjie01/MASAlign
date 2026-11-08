@@ -224,7 +224,14 @@ class MDPGraph:
         print("[Info] Compute LRS Completed.")
 
 
-    def extract_critical_pairs(self, max_loop_steps=4, default_p_loop=0.0):
+    def extract_critical_pairs(
+        self,
+        max_loop_steps=4,
+        default_p_loop=0.0,
+        min_advantage_gap=2.0,
+    ):
+        if min_advantage_gap < 0:
+            raise ValueError("min_advantage_gap must be non-negative")
         critical_pairs = []
         epsilon = 1e-9
 
@@ -274,13 +281,10 @@ class MDPGraph:
             is_directional_split = (high_log_contrib > 0 and low_log_contrib < 0)
 
             # 动态落差门槛：使用当前节点下所有动作 Advantage 的标准差作为基准
-            advantages = [m["advantage"] for m in contributions]
-            mean_adv = sum(advantages) / len(advantages)
-            adv_std = math.sqrt(sum((a - mean_adv) ** 2 for a in advantages) / len(advantages))
             adv_gap = high_log_contrib - low_log_contrib
             if high_log_contrib == float('-inf') or low_log_contrib == float('-inf'):
                 continue  # 如果最高或最低贡献也是负无穷，说明没有有效的后继分支
-            if is_directional_split or (adv_gap >= max(1.0, adv_std)):
+            if is_directional_split and abs(adv_gap) > min_advantage_gap:
                 pair = {
                     "state_u": node.state_id,
                     "observation": node.observation,
