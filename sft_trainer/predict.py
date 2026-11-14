@@ -217,6 +217,7 @@ class OpenAICompatibleVLMClient:
     def __init__(
         self,
         checkpoint_path: str,
+        adapter_path: str | None = None,
         processor_path: str | None = None,
         torch_dtype: str = "bfloat16",
         device_map: str | dict = "auto",
@@ -225,8 +226,8 @@ class OpenAICompatibleVLMClient:
     ):
         if torch_dtype not in DTYPE_MAP:
             raise ValueError(f"Unsupported torch_dtype: {torch_dtype}")
-        processor_path = processor_path or checkpoint_path
-        self.model_name = checkpoint_path
+        processor_path = processor_path or adapter_path or checkpoint_path
+        self.model_name = adapter_path or checkpoint_path
         self.processor = AutoProcessor.from_pretrained(
             processor_path,
             trust_remote_code=trust_remote_code,
@@ -238,6 +239,9 @@ class OpenAICompatibleVLMClient:
             trust_remote_code=trust_remote_code,
             device_map=device_map,
         )
+        if adapter_path:
+            from peft import PeftModel
+            self.model = PeftModel.from_pretrained(self.model, adapter_path)
         self.model.eval()
         self.model.config.use_cache = True
         self.input_device = self.model.get_input_embeddings().weight.device
@@ -246,7 +250,8 @@ class OpenAICompatibleVLMClient:
 
 def main():
     parser = argparse.ArgumentParser(description="Run inference with an SFT GUI-VLM checkpoint")
-    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--checkpoint", required=True, help="Base model path")
+    parser.add_argument("--adapter", default=None, help="Optional SFT LoRA adapter path")
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--image", default=None)
     parser.add_argument("--max_tokens", type=int, default=512)
@@ -257,7 +262,7 @@ def main():
         content.append({"type": "image", "image": args.image})
     content.append({"type": "text", "text": args.prompt})
 
-    client = OpenAICompatibleVLMClient(args.checkpoint)
+    client = OpenAICompatibleVLMClient(args.checkpoint, adapter_path=args.adapter)
     response = client.chat.completions.create(
         messages=[{"role": "user", "content": content}],
         model=args.checkpoint,

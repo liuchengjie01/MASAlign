@@ -59,38 +59,79 @@ class SFTDataset(Dataset):
         self.max_length = int(max_length)
         self.max_images = max(1, int(max_images))
         self.system_prompt = system_prompt
+        self.data_type = data_type
+        self._cached_path = None
+        self._cached_steps = None
+        self.skipped_incomplete_phases = 0
+        if self.data_type == "ghostei":
+            pattern = os.path.join(data_path, "**", "*.json")
+            files = [
+                path for path in glob.glob(pattern, recursive=True)
+                if os.path.splitext(os.path.basename(path))[0].isdigit()
+            ]
+            if not files:
+                raise FileNotFoundError(f"No trajectory JSON files matched: {pattern}")
+            safe_files = []
+            for path in files:
+                with open(path, "r", encoding="utf-8") as file:
+                    steps = json.load(file)
+                if not any(step.get("is_attack", False) for step in steps):
+                    safe_files.append(path)
+        elif self.data_type == "mobilesafetybench":
+            files = []
+            task_categories = ["memo_app_download", "memo_completing",
+                            "social_media_download", "social_media_posting_direct",
+                            "text_message_forwarding", "text_message_sending"]
+            for task_category in task_categories:
+                task_pattern = os.path.join(data_path, "*", task_category, "*")
+                task_dirs = sorted(
+                    task_dir
+                    for task_dir in glob.glob(task_pattern)
+                    if os.path.isdir(task_dir) and
+                    not os.path.basename(task_dir).endswith("_no_attack")
+                )
+                for task_dir in task_dirs:
+                    pattern = os.path.join(
+                        task_dir,
+                        "*",
+                        "log_*_defense_-1.json",
+                    )
+                    files.extend(glob.glob(pattern))
+            if not files:
+                raise FileNotFoundError(f"No trajectory JSON files matched: {pattern}")
+            safe_files = []
+            for path in files:
+                with open(path, "r", encoding="utf-8") as file:
+                    steps = json.load(file)
+                if not any(step.get("is_attack", False) for step in steps):
+                    safe_files.append(path)
+        else:
+            raise ValueError(f"Unsupported data_type: {self.data_type}")
 
-        pattern = os.path.join(data_path, "**", "*.json")
-        files = [
-            path for path in glob.glob(pattern, recursive=True)
-            if os.path.splitext(os.path.basename(path))[0].isdigit()
-        ]
-        if not files:
-            raise FileNotFoundError(f"No trajectory JSON files matched: {pattern}")
-        safe_files = []
-        for path in files:
-            with open(path, "r", encoding="utf-8") as file:
-                steps = json.load(file)
-            if not any(step.get("is_attack", False) for step in steps):
-                safe_files.append(path)
 
         self.samples = []
         for path in safe_files:
             with open(path, "r", encoding="utf-8") as file:
                 steps = json.load(file)
-            for step in steps:
+            for step_index, step in enumerate(steps):
                 for messages_key, response_key in self.PHASES:
-                    if messages_key not in step or response_key not in step:
+                    messages = step.get(messages_key)
+                    response = step.get(response_key)
+                    # A terminal planning phase may mark the task Finished,
+                    # leaving the following action/reflect phase initialized
+                    # but empty. Do not let such records reach label building.
+                    if not isinstance(messages, list) or not messages:
+                        self.skipped_incomplete_phases += 1
                         continue
-                    # *_messages is the prompt actually sent to the target model.
-                    # It already contains cumulative history and must not be
-                    # appended to the previous phase again.
-                    messages = copy.deepcopy(step[messages_key])
-                    messages.append({
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": step[response_key]}],
-                    })
-                    self.samples.append(messages)
+                    if not isinstance(response, str) or not response.strip():
+                        self.skipped_incomplete_phases += 1
+                        continue
+                    # Keep only a lightweight index. Materializing every
+                    # base64 screenshot in both distributed ranks can consume
+                    # tens of GB of host RAM before training starts.
+                    self.samples.append(
+                        (path, step_index, messages_key, response_key)
+                    )
 
         if debug:
             self.samples = self.samples[:5]
@@ -99,6 +140,32 @@ class SFTDataset(Dataset):
 
     def __len__(self):
         return len(self.samples)
+
+    def _materialize_sample(self, index):
+        path, step_index, messages_key, response_key = self.samples[index]
+        if path != self._cached_path:
+            with open(path, "r", encoding="utf-8") as file:
+                self._cached_steps = json.load(file)
+            self._cached_path = path
+        step = self._cached_steps[step_index]
+        messages_value = step.get(messages_key)
+        response_value = step.get(response_key)
+        if not isinstance(messages_value, list) or not messages_value:
+            raise RuntimeError(
+                f"Indexed SFT phase became empty: {path}, step={step_index}, "
+                f"field={messages_key}"
+            )
+        if not isinstance(response_value, str) or not response_value.strip():
+            raise RuntimeError(
+                f"Indexed SFT target became empty: {path}, step={step_index}, "
+                f"field={response_key}"
+            )
+        messages = copy.deepcopy(messages_value)
+        messages.append({
+            "role": "assistant",
+            "content": [{"type": "text", "text": response_value}],
+        })
+        return messages
 
     def _limit_images(self, messages):
         locations = []
@@ -233,7 +300,7 @@ class SFTDataset(Dataset):
             del messages[removable]
 
     def __getitem__(self, index):
-        return self._encode_one(self.samples[index])
+        return self._encode_one(self._materialize_sample(index))
 
 
 class SFTCollator:
@@ -311,7 +378,9 @@ def get_fsdp_layer_classes(model):
         "model.text_model.layers",
     )
     vision_paths = (
+        "visual.blocks",
         "model.visual.blocks",
+        "vision_model.encoder.layers",
         "model.vision_model.encoder.layers",
     )
     class_names = []
@@ -378,10 +447,37 @@ class JsonlMetricsCallback(TrainerCallback):
             file.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def save_vllm_checkpoint(trainer, processor, output_dir, fsdp_enabled):
-    """Save a standard Hugging Face checkpoint that vLLM can load directly."""
+def save_vllm_checkpoint(
+    trainer,
+    processor,
+    output_dir,
+    fsdp_enabled,
+    lora_enabled=False,
+    merge_on_save=False,
+    merged_output_dir=None,
+):
+    """Save the SFT adapter and optionally a merged checkpoint for deployment."""
     trainer.accelerator.wait_for_everyone()
     trainer.model.config.use_cache = True
+
+    if lora_enabled:
+        # This performs the FSDP state-dict collective before PEFT keeps only
+        # the adapter tensors.
+        trainer.save_model(output_dir)
+        if trainer.is_world_process_zero():
+            processor.save_pretrained(output_dir)
+            adapter_config = os.path.join(output_dir, "adapter_config.json")
+            if not os.path.isfile(adapter_config):
+                raise RuntimeError(f"Missing saved LoRA config: {adapter_config}")
+            if merge_on_save:
+                print(
+                    "merge_on_save is ignored for sharded training; load the "
+                    "base model and saved adapter together for inference.",
+                    flush=True,
+                )
+            print(f"saved SFT LoRA adapter to {output_dir}", flush=True)
+        trainer.accelerator.wait_for_everyone()
+        return
 
     if fsdp_enabled:
         # FSDP2 parameters are distributed across ranks. Every rank must enter
@@ -422,6 +518,28 @@ def save_vllm_checkpoint(trainer, processor, output_dir, fsdp_enabled):
     trainer.accelerator.wait_for_everyone()
 
 
+def apply_hardware_profile(config, profile_name):
+    profiles = config.get("hardware_profiles", {})
+    if profile_name not in profiles:
+        raise ValueError(
+            f"Unknown device profile {profile_name!r}; choose one of "
+            f"{sorted(profiles)}"
+        )
+
+    def merge(target, overrides):
+        for key, value in overrides.items():
+            if isinstance(value, dict) and isinstance(target.get(key), dict):
+                if value:
+                    merge(target[key], value)
+                else:
+                    target[key] = {}
+            else:
+                target[key] = copy.deepcopy(value)
+
+    merge(config, profiles[profile_name])
+    return config
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Multimodal trajectory SFT")
     parser.add_argument(
@@ -440,10 +558,16 @@ def parse_args():
     parser.add_argument("--lora", action="store_true", default=None)
     parser.add_argument("--debug", action="store_true", default=None)
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
+    parser.add_argument(
+        "--device_profile",
+        default=os.environ.get("DEVICE_PROFILE", "dual_4090d"),
+    )
     args = parser.parse_args()
 
     with open(args.config, encoding="utf-8") as file:
         config = yaml.safe_load(file)
+    config = apply_hardware_profile(config, args.device_profile)
+    print(f"Using device profile: {args.device_profile}", flush=True)
     overrides = {
         ("model", "path"): args.model_path,
         ("data", "train_jsonl"): args.train_jsonl,
@@ -496,22 +620,40 @@ def main():
         config.model.path,
         torch_dtype=DTYPE_MAP[config.model.torch_dtype],
         trust_remote_code=config.model.trust_remote_code,
+        attn_implementation=getattr(config.model, "attn_implementation", "sdpa"),
+        low_cpu_mem_usage=True,
         device_map=None,
     )
     fsdp_layer_classes = get_fsdp_layer_classes(model) if training.fsdp else []
-    if training.gradient_checkpointing:
-        model.config.use_cache = False
+    # KV cache is for autoregressive inference and wastes memory in training.
+    model.config.use_cache = False
 
     if config.lora.enable:
         from peft import LoraConfig, get_peft_model
+        visual = getattr(model, "visual", None)
+        if visual is not None:
+            for parameter in visual.parameters():
+                parameter.requires_grad = False
         lora_config = LoraConfig(
             r=config.lora.r,
             lora_alpha=config.lora.lora_alpha,
             lora_dropout=config.lora.lora_dropout,
-            target_modules=list(config.lora.target_modules),
+            target_modules=config.lora.target_modules,
+            bias="none",
             task_type=config.lora.task_type,
         )
         model = get_peft_model(model, lora_config)
+        visual_trainable = [
+            name for name, parameter in model.named_parameters()
+            if parameter.requires_grad and ".visual." in name
+        ]
+        if visual_trainable:
+            raise RuntimeError(
+                "Language-only LoRA unexpectedly matched visual modules: "
+                + ", ".join(visual_trainable[:5])
+            )
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
         if is_main_process:
             model.print_trainable_parameters()
 
@@ -520,11 +662,16 @@ def main():
         processor,
         max_length=config.data.max_length,
         system_prompt=config.data.system_prompt,
+        data_type=config.data.data_type,
         max_images=getattr(config.data, "max_images", 3),
         debug=config.runtime.debug,
     )
     if is_main_process:
-        print(f"loaded {len(dataset)} assistant-turn SFT samples", flush=True)
+        print(
+            f"loaded {len(dataset)} assistant-turn SFT samples; skipped "
+            f"{dataset.skipped_incomplete_phases} incomplete phases",
+            flush=True,
+        )
     collator = SFTCollator(tokenizer)
     if training.fsdp:
         fsdp_config["transformer_layer_cls_to_wrap"] = fsdp_layer_classes
@@ -567,14 +714,18 @@ def main():
         save_total_limit=training.save_total_limit,
         bf16=training.bf16,
         fp16=training.fp16,
+        tf32=getattr(training, "tf32", True),
         gradient_checkpointing=training.gradient_checkpointing,
         gradient_checkpointing_kwargs=_to_dict(training.gradient_checkpointing_kwargs),
         report_to=training.report_to,
+        optim=getattr(training, "optim", "adamw_torch"),
+        max_grad_norm=getattr(training, "max_grad_norm", 1.0),
         fsdp=training.fsdp,
         fsdp_config=fsdp_config,
         remove_unused_columns=training.remove_unused_columns,
         dataloader_pin_memory=training.dataloader_pin_memory,
         dataloader_num_workers=config.runtime.num_workers,
+        dataloader_persistent_workers=config.runtime.num_workers > 0,
         seed=training.seed,
     )
     trainer = Trainer(
@@ -596,6 +747,9 @@ def main():
         processor,
         training.output_dir,
         fsdp_enabled=bool(training.fsdp),
+        lora_enabled=bool(config.lora.enable),
+        merge_on_save=bool(getattr(config.lora, "merge_on_save", False)),
+        merged_output_dir=getattr(config.lora, "merged_output_dir", None),
     )
 
 

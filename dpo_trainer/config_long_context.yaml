@@ -1,0 +1,10 @@
+# Optional long-context profile, reusing the main training settings.
+base_config: config.yaml
+device_profile: pro6000_98g
+training:
+  output_dir: ./dpo_trainer/guiowl_dpo_32k_ckpt
+hardware_profiles:
+  pro6000_98g:
+    data:
+      max_length: 32768
+# dual_4090d keeps its 4K limits; 32K DPO on 2 x 24 GB was not validated.

@@ -1,50 +1,58 @@
 # config.yaml
 model:
-  path: "E:/luis/GUI-Owl-7B"
+  path: "/mnt/ssd251210/luis/gui_models/GUI-Owl-7B"
   trust_remote_code: true
   torch_dtype: "bfloat16"       # bfloat16 / float16 / float32
+  attn_implementation: "sdpa"
 
 data:
-  train_jsonl: "./sft_trainer/data"
+  train_jsonl: "/mnt/ssd251210/luis/MASAlign/data"
   max_length: 4096
   max_images: 1                  # Keep only the newest screenshot in each sample
   max_pixels: 802816             # 1024 * 28 * 28, below one million pixels
   system_prompt: ""
-  data_type: "gui_owl"
+  data_type: "ghostei"
 
 lora:
-  enable: false
-  r: 16
-  lora_alpha: 32
+  enable: true
+  r: 32
+  lora_alpha: 64
   lora_dropout: 0.05
-  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+  # Language transformer only; the visual tower remains frozen.
+  target_modules: "^(?!.*visual).*(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$"
   task_type: "CAUSAL_LM"
+  merge_on_save: false
 
 training:
-  output_dir: "./sft_trainer/guiowl_ckpt"
+  output_dir: "./sft_trainer/guiowl_sft_adapter"
   num_train_epochs: 3
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 8
-  learning_rate: 1.0e-5
+  learning_rate: 5.0e-5
   warmup_ratio: 0.1
   lr_scheduler_type: "cosine"
   logging_strategy: "steps"
   logging_steps: 10
   logging_first_step: true
   save_strategy: "epoch"
-  save_total_limit: 2
+  save_total_limit: 1
   bf16: true
   fp16: false
+  tf32: true
   gradient_checkpointing: true
   gradient_checkpointing_kwargs:
-    use_reentrant: true
+    use_reentrant: false
+  optim: "adamw_torch"
+  max_grad_norm: 1.0
   report_to: "none"
-  fsdp: "auto_wrap"
+  fsdp: "full_shard auto_wrap"
   fsdp_config:
     fsdp_version: 2
     reshard_after_forward: true
     state_dict_type: "FULL_STATE_DICT"
+    cpu_ram_efficient_loading: true
+    sync_module_states: true
   remove_unused_columns: false
   dataloader_pin_memory: false
   seed: 42
@@ -52,4 +60,31 @@ training:
 
 runtime:
   num_workers: 0
+  debug: false
+
+hardware_profiles:
+  dual_4090d:
+    data:
+      max_length: 4096
+    training:
+      gradient_accumulation_steps: 8
+      gradient_checkpointing: true
+      optim: "adamw_torch"
+      fsdp: "full_shard auto_wrap"
+      dataloader_pin_memory: true
+    runtime:
+      num_workers: 2
+
+  rtx6000_96g:
+    data:
+      max_length: 8192
+    training:
+      gradient_accumulation_steps: 16
+      gradient_checkpointing: false
+      optim: "adamw_torch_fused"
+      fsdp: ""
+      fsdp_config: {}
+      dataloader_pin_memory: true
+    runtime:
+      num_workers: 4
   debug: false                  # true 时只取前 5 条样本

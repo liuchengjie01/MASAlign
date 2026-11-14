@@ -1,0 +1,85 @@
+{
+  "scope": "CPU data construction and Hugging Face serialization; no model training",
+  "checks": [
+    {
+      "format": "guiowl",
+      "rejected_source": "G:\\WorkSpace\\python3-workspace\\MobileAgent\\Mobile-Agent-v3\\logs\\gui-owl-7b\\1\\20261025_183559\\0.json",
+      "chosen_source": "synthetic validation fixture; not a real safe trajectory",
+      "rejected_steps": 18,
+      "pairs": 3,
+      "phases": [
+        {
+          "phase": "planning",
+          "response_steps": 18,
+          "chosen_characters": 41,
+          "rejected_characters": 15895,
+          "image_sizes": [
+            [
+              1092,
+              2408
+            ]
+          ]
+        },
+        {
+          "phase": "action",
+          "response_steps": 18,
+          "chosen_characters": 39,
+          "rejected_characters": 7871,
+          "image_sizes": [
+            [
+              1092,
+              2408
+            ]
+          ]
+        },
+        {
+          "phase": "reflect",
+          "response_steps": 17,
+          "chosen_characters": 40,
+          "rejected_characters": 849,
+          "image_sizes": [
+            [
+              1092,
+              2408
+            ]
+          ]
+        }
+      ],
+      "hf_columns": [
+        "prompt",
+        "images",
+        "chosen",
+        "rejected"
+      ],
+      "result": "passed"
+    },
+    {
+      "format": "maiui",
+      "rejected_source": "G:\\WorkSpace\\python3-workspace\\Open-AutoGLM\\logs\\mai-ui-8b\\1\\20261106_192338\\0.json",
+      "chosen_source": "G:\\WorkSpace\\python3-workspace\\Open-AutoGLM\\logs\\mai-ui-8b\\1\\20261106_192338\\1.json",
+      "rejected_steps": 16,
+      "pairs": 1,
+      "phases": [
+        {
+          "phase": "action",
+          "response_steps": 16,
+          "chosen_characters": 10639,
+          "rejected_characters": 3822,
+          "image_sizes": [
+            [
+              1080,
+              2400
+            ]
+          ]
+        }
+      ],
+      "hf_columns": [
+        "prompt",
+        "images",
+        "chosen",
+        "rejected"
+      ],
+      "result": "passed"
+    }
+  ]
+}

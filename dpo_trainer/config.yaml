@@ -1,0 +1,97 @@
+device_profile: dual_4090d     # dual_4090d / pro6000_98g
+
+model:
+  # DPO starts independently from the original base model.
+  path: "E:/luis/GUI-Owl-7B"
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  loader: image_text_to_text   # remote-code AutoGLM can select causal_lm
+  fsdp_layer_classes: []       # optional override for a new model architecture
+  # SDPA is built into PyTorch and avoids an extra flash-attn dependency.
+  attn_implementation: "sdpa"
+
+data:
+  train_jsonl: "E:/luis/mobilesafetybench/logs"
+  # Balanced profile for an 8.3B VLM on two 24 GB cards.
+  max_length: 4096
+  max_images: 1                  
+  max_pixels: 802816             
+  system_prompt: ""
+  data_type: "mobilesafetybench"
+  guiowl_phases: all           # all or [action] or [planning, action, reflect]
+
+lora:
+  enable: true
+  r: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+  # Regex prevents down_proj from accidentally matching the visual tower.
+  target_modules: '^(?!.*(visual|vision_model|vision_tower)).*(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$'
+  task_type: "CAUSAL_LM"
+
+dpo:
+  beta: 0.1                      # DPO 的 KL 散度惩罚系数
+  truncation_mode: keep_start    # max_length applies to prompt + completion
+
+training:
+  output_dir: "./dpo_trainer/guiowl_dpo_ckpt"
+  num_train_epochs: 3
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 5.0e-6
+  warmup_steps: 0.1              # fraction of total updates; integer for exact steps
+  lr_scheduler_type: "cosine"
+  logging_steps: 10
+  save_strategy: "epoch"
+  save_total_limit: 1
+  bf16: true
+  tf32: true
+  gradient_checkpointing: true
+  gradient_checkpointing_kwargs:
+    use_reentrant: false
+  optim: "adamw_torch"
+  max_grad_norm: 1.0
+  report_to: "none"
+  
+  # Full-shard the frozen 8.3B base weights across both 24 GB GPUs.
+  fsdp: true
+  fsdp_config:
+    version: 2
+    auto_wrap_policy: TRANSFORMER_BASED_WRAP
+    reshard_after_forward: true
+    state_dict_type: "FULL_STATE_DICT"
+    cpu_ram_efficient_loading: true
+    sync_module_states: true
+    
+  remove_unused_columns: false
+  dataloader_pin_memory: false
+  seed: 42
+  resume_from_checkpoint: null
+
+# The launcher reads num_processes from the selected profile.
+hardware_profiles:
+  dual_4090d:
+    num_processes: 2
+    data:
+      max_length: 4096
+    training:
+      gradient_accumulation_steps: 4
+      gradient_checkpointing: true
+      optim: "adamw_torch"
+      fsdp: true
+      dataloader_pin_memory: true
+      dataloader_num_workers: 2
+
+  pro6000_98g:
+    num_processes: 1
+    data:
+      max_length: 8192
+    training:
+      gradient_accumulation_steps: 8
+      # DPO stores chosen/rejected activations, so checkpoint at 8K.
+      gradient_checkpointing: true
+      optim: "adamw_torch_fused"
+      fsdp: false
+      fsdp_config: {}
+      dataloader_pin_memory: true
+      dataloader_num_workers: 4
