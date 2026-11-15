@@ -182,12 +182,13 @@ class TrajectoryDPODataset:
         for phase in GUIOWL_PHASES:
             chosen = [item[phase] for item in safe if phase in item and item[phase].has_prompt]
             rejected = [item[phase] for item in attacked if phase in item]
-            pair = next(((good, bad.response) for good in chosen for bad in rejected
-                         if good.response != bad.response), None)
-            if pair:
+            # 全组合：每个 chosen 配每个 rejected，仅跳过响应完全相同的
+            pairs = [(good, bad.response) for good in chosen for bad in rejected
+                     if good.response != bad.response]
+            for pair in pairs:
                 self.samples.append(pair)
                 self.stats[f"{phase}_pairs"] += 1
-            elif any(phase in item for item in safe + attacked):
+            if not pairs and any(phase in item for item in safe + attacked):
                 self.stats["invalid_phases"] += 1
 
     def __len__(self):
