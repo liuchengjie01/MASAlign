@@ -267,6 +267,8 @@ class SFTDataset(Dataset):
             item["pixel_values"] = output["pixel_values"]
         if output.get("image_grid_thw") is not None:
             item["image_grid_thw"] = output["image_grid_thw"]
+        if output.get("mm_token_type_ids") is not None:
+            item["mm_token_type_ids"] = output["mm_token_type_ids"][0].tolist()
         return item
 
     def _encode_one(self, sample):
@@ -311,17 +313,26 @@ class SFTCollator:
         max_length = max(len(feature["input_ids"]) for feature in features)
         pad_id = self.tok.pad_token_id
         input_ids, labels, attention_mask = [], [], []
+        has_mm = any("mm_token_type_ids" in f for f in features)
+        mm_token_type_ids = [] if has_mm else None
         for feature in features:
             padding = max_length - len(feature["input_ids"])
             input_ids.append(feature["input_ids"] + [pad_id] * padding)
             labels.append(feature["labels"] + [-100] * padding)
             attention_mask.append([1] * len(feature["input_ids"]) + [0] * padding)
-
+            if has_mm:
+                # mm_token_type_ids: 0 = text / invalid; padding stays 0.
+                mm_ids = feature.get("mm_token_type_ids")
+                if mm_ids is None:
+                    mm_ids = [0] * len(feature["input_ids"])
+                mm_token_type_ids.append(mm_ids + [0] * padding)
         batch = {
             "input_ids": torch.tensor(input_ids, dtype=torch.long),
             "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
             "labels": torch.tensor(labels, dtype=torch.long),
         }
+        if has_mm:
+            batch["mm_token_type_ids"] = torch.tensor(mm_token_type_ids, dtype=torch.long)
         pixel_values = [f["pixel_values"] for f in features if f.get("pixel_values") is not None]
         image_grids = [f["image_grid_thw"] for f in features if f.get("image_grid_thw") is not None]
         if pixel_values:
