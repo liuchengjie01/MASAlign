@@ -520,6 +520,9 @@ def save_vllm_checkpoint(
 
 def apply_hardware_profile(config, profile_name):
     profiles = config.get("hardware_profiles", {})
+    profile_name = {
+        "rtx6000_96g": "pro6000_98g", "rtx6000_98g": "pro6000_98g",
+    }.get(profile_name, profile_name)
     if profile_name not in profiles:
         raise ValueError(
             f"Unknown device profile {profile_name!r}; choose one of "
@@ -591,6 +594,7 @@ def parse_args():
 
 
 def main():
+    print(f"SFT entry: {os.path.abspath(__file__)}, pid={os.getpid()}", flush=True)
     config = parse_args()
     set_seed(config.training.seed)
     os.makedirs(config.training.output_dir, exist_ok=True)
@@ -607,6 +611,7 @@ def main():
         # explicit fsdp_version below through fsdp_config.
         os.environ["FSDP_VERSION"] = str(fsdp_version)
 
+    print(f"Loading processor: {config.model.path}", flush=True)
     processor = AutoProcessor.from_pretrained(
         config.model.path,
         trust_remote_code=config.model.trust_remote_code,
@@ -616,6 +621,7 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    print(f"Loading model weights: {config.model.path}", flush=True)
     model = AutoModelImageTextToText.from_pretrained(
         config.model.path,
         torch_dtype=DTYPE_MAP[config.model.torch_dtype],
@@ -657,6 +663,7 @@ def main():
         if is_main_process:
             model.print_trainable_parameters()
 
+    print(f"Building SFT dataset: {config.data.train_jsonl}", flush=True)
     dataset = SFTDataset(
         config.data.train_jsonl,
         processor,
@@ -698,6 +705,8 @@ def main():
             f"total_steps={total_steps}, warmup_steps={warmup_steps}",
             flush=True,
         )
+    # Leave distributed options at their library defaults on a single GPU.
+    fsdp_kwargs = {"fsdp": training.fsdp, "fsdp_config": fsdp_config} if training.fsdp else {}
     training_args = TrainingArguments(
         output_dir=training.output_dir,
         num_train_epochs=training.num_train_epochs,
@@ -720,8 +729,7 @@ def main():
         report_to=training.report_to,
         optim=getattr(training, "optim", "adamw_torch"),
         max_grad_norm=getattr(training, "max_grad_norm", 1.0),
-        fsdp=training.fsdp,
-        fsdp_config=fsdp_config,
+        **fsdp_kwargs,
         remove_unused_columns=training.remove_unused_columns,
         dataloader_pin_memory=training.dataloader_pin_memory,
         dataloader_num_workers=config.runtime.num_workers,
@@ -740,6 +748,7 @@ def main():
             )
         ],
     )
+    print("Starting SFT trainer.train()...", flush=True)
     trainer.train(resume_from_checkpoint=training.resume_from_checkpoint)
     trainer.save_state()
     save_vllm_checkpoint(

@@ -75,12 +75,13 @@ hardware_profiles:
     runtime:
       num_workers: 2
 
-  rtx6000_96g:
+  pro6000_98g:
     data:
       max_length: 8192
     training:
+      output_dir: "./sft_trainer/guiowl_sft_adapter_pro6000"
       gradient_accumulation_steps: 16
-      gradient_checkpointing: false
+      gradient_checkpointing: true
       optim: "adamw_torch_fused"
       fsdp: ""
       fsdp_config: {}
